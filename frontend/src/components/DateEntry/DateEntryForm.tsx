@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Calendar,
   Star,
@@ -14,12 +14,9 @@ import { Button } from "@/components/ui/Button";
 import { useLogStore } from "@/stores/logStore";
 import { api } from "@/services/api";
 import {
-  MEETING_TAGS,
-  VENUE_TAGS,
-  ACTIVITY_TAGS,
-  PHYSICAL_FEMALE_TAGS,
-  PHYSICAL_MALE_TAGS,
   AGE_RANGES,
+  loadTags,
+  getTagsByCategory,
   type TagDefinition,
   type Gender,
 } from "@/data/tags";
@@ -100,6 +97,17 @@ export function DateEntryForm() {
   const [description, setDescription] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tagsLoaded, setTagsLoaded] = useState(false);
+
+  useEffect(() => {
+    loadTags().then(() => setTagsLoaded(true)).catch(() => {});
+  }, []);
+
+  const meetingTags = useMemo(() => tagsLoaded ? getTagsByCategory("meeting") : [], [tagsLoaded]);
+  const venueTags = useMemo(() => tagsLoaded ? getTagsByCategory("venue") : [], [tagsLoaded]);
+  const activityTags = useMemo(() => tagsLoaded ? getTagsByCategory("activity") : [], [tagsLoaded]);
+  const physicalFemaleTags = useMemo(() => tagsLoaded ? getTagsByCategory("physical_female") : [], [tagsLoaded]);
+  const physicalMaleTags = useMemo(() => tagsLoaded ? getTagsByCategory("physical_male") : [], [tagsLoaded]);
 
   const toggleTag = (id: number) => {
     setSelectedTagIds((prev) => {
@@ -114,22 +122,22 @@ export function DateEntryForm() {
   };
 
   const physicalTags = useMemo(() => {
-    if (gender === "male") return PHYSICAL_MALE_TAGS;
-    if (gender === "female") return PHYSICAL_FEMALE_TAGS;
+    if (gender === "male") return physicalMaleTags;
+    if (gender === "female") return physicalFemaleTags;
     return [];
-  }, [gender]);
+  }, [gender, physicalMaleTags, physicalFemaleTags]);
 
   // When gender changes, clear physical tags from opposite gender
   const handleGenderChange = (g: Gender) => {
     setGender(g);
     // Remove physical tags that don't match the new gender
     const validPhysicalIds = new Set(
-      (g === "male" ? PHYSICAL_MALE_TAGS : g === "female" ? PHYSICAL_FEMALE_TAGS : []).map(
+      (g === "male" ? physicalMaleTags : g === "female" ? physicalFemaleTags : []).map(
         (t) => t.id,
       ),
     );
     const allPhysicalIds = new Set(
-      [...PHYSICAL_MALE_TAGS, ...PHYSICAL_FEMALE_TAGS].map((t) => t.id),
+      [...physicalMaleTags, ...physicalFemaleTags].map((t) => t.id),
     );
     setSelectedTagIds((prev) => {
       const next = new Set(prev);
@@ -250,7 +258,7 @@ export function DateEntryForm() {
             How You Met
           </label>
           <TagChips
-            tags={MEETING_TAGS}
+            tags={meetingTags}
             selectedIds={selectedTagIds}
             onToggle={toggleTag}
           />
@@ -263,7 +271,7 @@ export function DateEntryForm() {
             Venue Type
           </label>
           <TagChips
-            tags={VENUE_TAGS}
+            tags={venueTags}
             selectedIds={selectedTagIds}
             onToggle={toggleTag}
           />
@@ -276,7 +284,7 @@ export function DateEntryForm() {
             Activities
           </label>
           <TagChips
-            tags={ACTIVITY_TAGS}
+            tags={activityTags}
             selectedIds={selectedTagIds}
             onToggle={toggleTag}
           />

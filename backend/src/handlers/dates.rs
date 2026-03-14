@@ -50,6 +50,7 @@ pub struct DateResponse {
     pub id: Uuid,
     pub country_code: String,
     pub city_id: i32,
+    pub city_name: String,
     pub gender: String,
     pub age_range: String,
     pub description: Option<String>,
@@ -164,18 +165,15 @@ async fn create_date(
         )));
     }
 
-    // Verify city exists
-    let city_exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM cities WHERE id = $1 AND country_code = $2)",
+    // Verify city exists and get name
+    let city_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM cities WHERE id = $1 AND country_code = $2",
     )
     .bind(body.city_id)
     .bind(&body.country_code)
-    .fetch_one(&state.db)
-    .await?;
-
-    if !city_exists {
-        return Err(AppError::BadRequest("City not found for the given country".to_string()));
-    }
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("City not found for the given country".to_string()))?;
 
     let id = Uuid::now_v7();
 
@@ -204,6 +202,7 @@ async fn create_date(
         id,
         country_code: body.country_code,
         city_id: body.city_id,
+        city_name,
         gender: body.gender,
         age_range: body.age_range,
         description: body.description,
@@ -230,12 +229,13 @@ async fn list_dates(
     let limit = params.limit.unwrap_or(50).min(100);
 
     let rows = if let Some(cursor) = params.cursor {
-        sqlx::query_as::<_, (Uuid, String, i32, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+        sqlx::query_as::<_, (Uuid, String, i32, String, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
             r#"
-            SELECT id, country_code, city_id, gender, age_range, description, rating, date_at, created_at, updated_at
-            FROM dates
-            WHERE user_id = $1 AND deleted_at IS NULL AND id < $2
-            ORDER BY id DESC
+            SELECT d.id, d.country_code, d.city_id, c.name, d.gender, d.age_range, d.description, d.rating, d.date_at, d.created_at, d.updated_at
+            FROM dates d
+            JOIN cities c ON c.id = d.city_id
+            WHERE d.user_id = $1 AND d.deleted_at IS NULL AND d.id < $2
+            ORDER BY d.id DESC
             LIMIT $3
             "#,
         )
@@ -245,12 +245,13 @@ async fn list_dates(
         .fetch_all(&state.db)
         .await?
     } else {
-        sqlx::query_as::<_, (Uuid, String, i32, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+        sqlx::query_as::<_, (Uuid, String, i32, String, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
             r#"
-            SELECT id, country_code, city_id, gender, age_range, description, rating, date_at, created_at, updated_at
-            FROM dates
-            WHERE user_id = $1 AND deleted_at IS NULL
-            ORDER BY id DESC
+            SELECT d.id, d.country_code, d.city_id, c.name, d.gender, d.age_range, d.description, d.rating, d.date_at, d.created_at, d.updated_at
+            FROM dates d
+            JOIN cities c ON c.id = d.city_id
+            WHERE d.user_id = $1 AND d.deleted_at IS NULL
+            ORDER BY d.id DESC
             LIMIT $2
             "#,
         )
@@ -269,14 +270,15 @@ async fn list_dates(
             id: row.0,
             country_code: row.1,
             city_id: row.2,
-            gender: row.3,
-            age_range: row.4,
-            description: row.5,
-            rating: row.6,
-            date_at: row.7,
+            city_name: row.3,
+            gender: row.4,
+            age_range: row.5,
+            description: row.6,
+            rating: row.7,
+            date_at: row.8,
             tag_ids,
-            created_at: row.8,
-            updated_at: row.9,
+            created_at: row.9,
+            updated_at: row.10,
         });
     }
 
@@ -301,11 +303,12 @@ async fn get_date(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let row = sqlx::query_as::<_, (Uuid, String, i32, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+    let row = sqlx::query_as::<_, (Uuid, String, i32, String, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
         r#"
-        SELECT id, country_code, city_id, gender, age_range, description, rating, date_at, created_at, updated_at
-        FROM dates
-        WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+        SELECT d.id, d.country_code, d.city_id, c.name, d.gender, d.age_range, d.description, d.rating, d.date_at, d.created_at, d.updated_at
+        FROM dates d
+        JOIN cities c ON c.id = d.city_id
+        WHERE d.id = $1 AND d.user_id = $2 AND d.deleted_at IS NULL
         "#,
     )
     .bind(id)
@@ -320,14 +323,15 @@ async fn get_date(
         id: row.0,
         country_code: row.1,
         city_id: row.2,
-        gender: row.3,
-        age_range: row.4,
-        description: row.5,
-        rating: row.6,
-        date_at: row.7,
+        city_name: row.3,
+        gender: row.4,
+        age_range: row.5,
+        description: row.6,
+        rating: row.7,
+        date_at: row.8,
         tag_ids,
-        created_at: row.8,
-        updated_at: row.9,
+        created_at: row.9,
+        updated_at: row.10,
     };
 
     Ok(Json(serde_json::json!({

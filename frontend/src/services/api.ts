@@ -1,6 +1,7 @@
 import { useAuthStore } from "@/stores/authStore";
 import type {
   ApiResponse,
+  City,
   Connection,
   DateEntry,
   InviteResponse,
@@ -8,6 +9,34 @@ import type {
 } from "@/types";
 
 const API_BASE = "/api";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function mapDate(d: any): DateEntry {
+  return {
+    id: d.id,
+    countryCode: d.country_code,
+    cityId: d.city_id,
+    cityName: d.city_name ?? "",
+    gender: d.gender,
+    ageRange: d.age_range,
+    description: d.description ?? null,
+    rating: d.rating,
+    dateAt: d.date_at,
+    tagIds: d.tag_ids ?? [],
+    createdAt: d.created_at,
+    updatedAt: d.updated_at,
+  };
+}
+
+function mapStats(s: any): Stats {
+  return {
+    totalDates: s.total_dates,
+    uniqueCountries: s.unique_countries,
+    uniqueCities: s.unique_cities,
+    averageRating: s.average_rating ?? null,
+  };
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 async function request<T>(
   path: string,
@@ -78,7 +107,7 @@ export const api = {
     }),
 
   // Dates
-  createDate: (data: {
+  createDate: async (data: {
     country_code: string;
     city_id: number;
     gender: "male" | "female" | "other";
@@ -87,23 +116,35 @@ export const api = {
     rating: number;
     date_at: string;
     tag_ids: number[];
-  }) =>
-    request<DateEntry>("/dates", {
+  }): Promise<DateEntry> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any>("/dates", {
       method: "POST",
       body: JSON.stringify(data),
-    }),
+    });
+    return mapDate(raw);
+  },
 
-  getDates: (cursor?: string, limit?: number) => {
+  getDates: async (cursor?: string, limit?: number): Promise<{ dates: DateEntry[]; next_cursor?: string }> => {
     const params = new URLSearchParams();
     if (cursor) params.set("cursor", cursor);
     if (limit) params.set("limit", String(limit));
     const qs = params.toString();
-    return request<{ dates: DateEntry[]; next_cursor?: string }>(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any>(
       `/dates${qs ? `?${qs}` : ""}`,
     );
+    return {
+      dates: (raw.dates ?? []).map(mapDate),
+      next_cursor: raw.next_cursor,
+    };
   },
 
-  getDate: (id: string) => request<DateEntry>(`/dates/${id}`),
+  getDate: async (id: string): Promise<DateEntry> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any>(`/dates/${id}`);
+    return mapDate(raw);
+  },
 
   updateDate: (id: string, data: Partial<{
     country_code: string;
@@ -125,8 +166,18 @@ export const api = {
       method: "DELETE",
     }),
 
+  // Cities
+  getCities: (countryCode?: string) =>
+    request<City[]>(
+      `/cities${countryCode ? `?country_code=${countryCode}` : ""}`,
+    ),
+
   // Stats
-  getStats: () => request<Stats>("/stats"),
+  getStats: async (): Promise<Stats> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any>("/stats");
+    return mapStats(raw);
+  },
 
   // Connections
   getConnections: (status?: string) =>
@@ -146,6 +197,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ invite_type: inviteType }),
     }),
+
+  // Tags
+  getTags: (category?: string) =>
+    request<Array<{ id: number; name: string; category: string; is_predefined: boolean }>>(
+      `/tags${category ? `?category=${category}` : ""}`,
+    ),
 
   // Feed
   getFeed: () =>

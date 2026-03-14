@@ -11,6 +11,7 @@ export interface DateEntry {
   id: string;
   countryCode: string;
   cityId: number;
+  cityName: string;
   gender: "male" | "female" | "other";
   ageRange: string;
   description: string | null;

@@ -5,7 +5,7 @@ interface DateState {
   dates: DateEntry[];
   stats: Stats;
   selectedCountry: string | null;
-  selectedCity: { id: number; name: string; lat: number; lng: number } | null;
+  selectedCity: { id: number; name: string } | null;
   isDateFormOpen: boolean;
   setDates: (dates: DateEntry[]) => void;
   addDate: (entry: DateEntry) => void;
@@ -14,7 +14,7 @@ interface DateState {
   setStats: (stats: Stats) => void;
   setSelectedCountry: (code: string | null) => void;
   setSelectedCity: (
-    city: { id: number; name: string; lat: number; lng: number } | null,
+    city: { id: number; name: string } | null,
   ) => void;
   openDateForm: () => void;
   closeDateForm: () => void;

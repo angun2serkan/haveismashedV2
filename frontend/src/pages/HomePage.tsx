@@ -4,6 +4,7 @@ import { StatsCards } from "@/components/Stats/StatsCards";
 import { useLogStore } from "@/stores/logStore";
 import { useState, useRef } from "react";
 import { ChevronUp, Star, Calendar } from "lucide-react";
+import { getCountryName } from "@/utils/countryName";
 
 export function HomePage() {
   const dates = useLogStore((s) => s.dates);
@@ -63,7 +64,7 @@ export function HomePage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-white font-medium">
-                      {date.countryCode}
+                      {date.cityName ? `${date.cityName}, ` : ""}{getCountryName(date.countryCode)}
                     </span>
                     <span className="text-xs text-dark-500 flex items-center gap-1">
                       <Calendar size={10} />
