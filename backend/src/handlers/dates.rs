@@ -3,6 +3,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -22,7 +23,11 @@ pub struct CreateDateRequest {
     pub gender: String,
     pub age_range: String,
     pub description: Option<String>,
+    pub person_nickname: Option<String>,
     pub rating: i32,
+    pub face_rating: Option<i32>,
+    pub body_rating: Option<i32>,
+    pub chat_rating: Option<i32>,
     pub date_at: NaiveDate,
     pub tag_ids: Vec<i32>,
 }
@@ -34,7 +39,11 @@ pub struct UpdateDateRequest {
     pub gender: Option<String>,
     pub age_range: Option<String>,
     pub description: Option<String>,
+    pub person_nickname: Option<String>,
     pub rating: Option<i32>,
+    pub face_rating: Option<i32>,
+    pub body_rating: Option<i32>,
+    pub chat_rating: Option<i32>,
     pub date_at: Option<NaiveDate>,
     pub tag_ids: Option<Vec<i32>>,
 }
@@ -51,10 +60,16 @@ pub struct DateResponse {
     pub country_code: String,
     pub city_id: i32,
     pub city_name: String,
+    pub longitude: f64,
+    pub latitude: f64,
     pub gender: String,
     pub age_range: String,
     pub description: Option<String>,
+    pub person_nickname: Option<String>,
     pub rating: i32,
+    pub face_rating: Option<i32>,
+    pub body_rating: Option<i32>,
+    pub chat_rating: Option<i32>,
     pub date_at: NaiveDate,
     pub tag_ids: Vec<i32>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -100,6 +115,15 @@ fn validate_age_range(age_range: &str) -> Result<(), AppError> {
 fn validate_rating(rating: i32) -> Result<(), AppError> {
     if !(1..=10).contains(&rating) {
         return Err(AppError::BadRequest("rating must be between 1 and 10".to_string()));
+    }
+    Ok(())
+}
+
+fn validate_optional_rating(rating: Option<i32>, field: &str) -> Result<(), AppError> {
+    if let Some(r) = rating {
+        if !(1..=10).contains(&r) {
+            return Err(AppError::BadRequest(format!("{field} must be between 1 and 10")));
+        }
     }
     Ok(())
 }
@@ -150,6 +174,9 @@ async fn create_date(
     validate_gender(&body.gender)?;
     validate_age_range(&body.age_range)?;
     validate_rating(body.rating)?;
+    validate_optional_rating(body.face_rating, "face_rating")?;
+    validate_optional_rating(body.body_rating, "body_rating")?;
+    validate_optional_rating(body.chat_rating, "chat_rating")?;
 
     // Check date limit
     let count = sqlx::query_scalar::<_, i64>(
@@ -165,9 +192,9 @@ async fn create_date(
         )));
     }
 
-    // Verify city exists and get name
-    let city_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM cities WHERE id = $1 AND country_code = $2",
+    // Verify city exists and get name + coordinates
+    let city_row = sqlx::query_as::<_, (String, f64, f64)>(
+        "SELECT name, ST_X(location), ST_Y(location) FROM cities WHERE id = $1 AND country_code = $2",
     )
     .bind(body.city_id)
     .bind(&body.country_code)
@@ -175,12 +202,16 @@ async fn create_date(
     .await?
     .ok_or_else(|| AppError::BadRequest("City not found for the given country".to_string()))?;
 
+    let city_name = city_row.0;
+    let longitude = city_row.1;
+    let latitude = city_row.2;
+
     let id = Uuid::now_v7();
 
     sqlx::query(
         r#"
-        INSERT INTO dates (id, user_id, country_code, city_id, gender, age_range, description, rating, date_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO dates (id, user_id, country_code, city_id, gender, age_range, description, person_nickname, rating, face_rating, body_rating, chat_rating, date_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         "#,
     )
     .bind(id)
@@ -190,7 +221,11 @@ async fn create_date(
     .bind(&body.gender)
     .bind(&body.age_range)
     .bind(&body.description)
+    .bind(&body.person_nickname)
     .bind(body.rating)
+    .bind(body.face_rating)
+    .bind(body.body_rating)
+    .bind(body.chat_rating)
     .bind(body.date_at)
     .execute(&state.db)
     .await?;
@@ -198,15 +233,24 @@ async fn create_date(
     // Insert tags
     replace_tags(&state.db, id, &body.tag_ids).await?;
 
+    // Check for new badges
+    let new_badges = crate::handlers::badges::check_and_award_badges(&state.db, auth.user_id).await?;
+
     let resp = DateResponse {
         id,
         country_code: body.country_code,
         city_id: body.city_id,
         city_name,
+        longitude,
+        latitude,
         gender: body.gender,
         age_range: body.age_range,
         description: body.description,
+        person_nickname: body.person_nickname,
         rating: body.rating,
+        face_rating: body.face_rating,
+        body_rating: body.body_rating,
+        chat_rating: body.chat_rating,
         date_at: body.date_at,
         tag_ids: body.tag_ids,
         created_at: chrono::Utc::now(),
@@ -216,6 +260,7 @@ async fn create_date(
     Ok(Json(serde_json::json!({
         "success": true,
         "data": resp,
+        "new_badges": new_badges,
         "error": null
     })))
 }
@@ -229,9 +274,9 @@ async fn list_dates(
     let limit = params.limit.unwrap_or(50).min(100);
 
     let rows = if let Some(cursor) = params.cursor {
-        sqlx::query_as::<_, (Uuid, String, i32, String, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+        sqlx::query(
             r#"
-            SELECT d.id, d.country_code, d.city_id, c.name, d.gender, d.age_range, d.description, d.rating, d.date_at, d.created_at, d.updated_at
+            SELECT d.id, d.country_code, d.city_id, c.name, ST_X(c.location), ST_Y(c.location), d.gender, d.age_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
             FROM dates d
             JOIN cities c ON c.id = d.city_id
             WHERE d.user_id = $1 AND d.deleted_at IS NULL AND d.id < $2
@@ -245,9 +290,9 @@ async fn list_dates(
         .fetch_all(&state.db)
         .await?
     } else {
-        sqlx::query_as::<_, (Uuid, String, i32, String, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+        sqlx::query(
             r#"
-            SELECT d.id, d.country_code, d.city_id, c.name, d.gender, d.age_range, d.description, d.rating, d.date_at, d.created_at, d.updated_at
+            SELECT d.id, d.country_code, d.city_id, c.name, ST_X(c.location), ST_Y(c.location), d.gender, d.age_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
             FROM dates d
             JOIN cities c ON c.id = d.city_id
             WHERE d.user_id = $1 AND d.deleted_at IS NULL
@@ -265,20 +310,27 @@ async fn list_dates(
     let mut dates: Vec<DateResponse> = Vec::new();
 
     for row in rows.into_iter().take(limit as usize) {
-        let tag_ids = fetch_tag_ids(&state.db, row.0).await?;
+        let date_id: Uuid = row.get(0);
+        let tag_ids = fetch_tag_ids(&state.db, date_id).await?;
         dates.push(DateResponse {
-            id: row.0,
-            country_code: row.1,
-            city_id: row.2,
-            city_name: row.3,
-            gender: row.4,
-            age_range: row.5,
-            description: row.6,
-            rating: row.7,
-            date_at: row.8,
+            id: date_id,
+            country_code: row.get(1),
+            city_id: row.get(2),
+            city_name: row.get(3),
+            longitude: row.get(4),
+            latitude: row.get(5),
+            gender: row.get(6),
+            age_range: row.get(7),
+            description: row.get(8),
+            person_nickname: row.get(9),
+            rating: row.get(10),
+            face_rating: row.get(11),
+            body_rating: row.get(12),
+            chat_rating: row.get(13),
+            date_at: row.get(14),
             tag_ids,
-            created_at: row.9,
-            updated_at: row.10,
+            created_at: row.get(15),
+            updated_at: row.get(16),
         });
     }
 
@@ -303,9 +355,9 @@ async fn get_date(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let row = sqlx::query_as::<_, (Uuid, String, i32, String, String, String, Option<String>, i32, NaiveDate, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+    let row = sqlx::query(
         r#"
-        SELECT d.id, d.country_code, d.city_id, c.name, d.gender, d.age_range, d.description, d.rating, d.date_at, d.created_at, d.updated_at
+        SELECT d.id, d.country_code, d.city_id, c.name, ST_X(c.location), ST_Y(c.location), d.gender, d.age_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
         FROM dates d
         JOIN cities c ON c.id = d.city_id
         WHERE d.id = $1 AND d.user_id = $2 AND d.deleted_at IS NULL
@@ -317,21 +369,28 @@ async fn get_date(
     .await?
     .ok_or_else(|| AppError::NotFound("Date not found".to_string()))?;
 
-    let tag_ids = fetch_tag_ids(&state.db, row.0).await?;
+    let date_id: Uuid = row.get(0);
+    let tag_ids = fetch_tag_ids(&state.db, date_id).await?;
 
     let entry = DateResponse {
-        id: row.0,
-        country_code: row.1,
-        city_id: row.2,
-        city_name: row.3,
-        gender: row.4,
-        age_range: row.5,
-        description: row.6,
-        rating: row.7,
-        date_at: row.8,
+        id: date_id,
+        country_code: row.get(1),
+        city_id: row.get(2),
+        city_name: row.get(3),
+        longitude: row.get(4),
+        latitude: row.get(5),
+        gender: row.get(6),
+        age_range: row.get(7),
+        description: row.get(8),
+        person_nickname: row.get(9),
+        rating: row.get(10),
+        face_rating: row.get(11),
+        body_rating: row.get(12),
+        chat_rating: row.get(13),
+        date_at: row.get(14),
         tag_ids,
-        created_at: row.9,
-        updated_at: row.10,
+        created_at: row.get(15),
+        updated_at: row.get(16),
     };
 
     Ok(Json(serde_json::json!({
@@ -408,10 +467,45 @@ async fn update_date(
             .await?;
     }
 
+    if let Some(ref person_nickname) = body.person_nickname {
+        sqlx::query("UPDATE dates SET person_nickname = $1, updated_at = NOW() WHERE id = $2")
+            .bind(person_nickname)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+
     if let Some(rating) = body.rating {
         validate_rating(rating)?;
         sqlx::query("UPDATE dates SET rating = $1, updated_at = NOW() WHERE id = $2")
             .bind(rating)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    if let Some(face_rating) = body.face_rating {
+        validate_rating(face_rating)?;
+        sqlx::query("UPDATE dates SET face_rating = $1, updated_at = NOW() WHERE id = $2")
+            .bind(face_rating)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    if let Some(body_rating) = body.body_rating {
+        validate_rating(body_rating)?;
+        sqlx::query("UPDATE dates SET body_rating = $1, updated_at = NOW() WHERE id = $2")
+            .bind(body_rating)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    if let Some(chat_rating) = body.chat_rating {
+        validate_rating(chat_rating)?;
+        sqlx::query("UPDATE dates SET chat_rating = $1, updated_at = NOW() WHERE id = $2")
+            .bind(chat_rating)
             .bind(id)
             .execute(&state.db)
             .await?;

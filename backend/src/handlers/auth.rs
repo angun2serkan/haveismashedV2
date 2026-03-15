@@ -13,8 +13,8 @@ use crate::AppState;
 
 #[derive(Deserialize)]
 pub struct RegisterRequest {
-    /// Optional platform invite UUID (required for registration).
-    pub invite_id: Option<Uuid>,
+    /// Optional platform invite token (required for registration).
+    pub invite_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -77,10 +77,10 @@ async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    // If invite_id is provided, consume it (platform invite)
-    if let Some(invite_id) = body.invite_id {
+    // If invite_token is provided, consume it (platform invite)
+    if let Some(ref invite_token) = body.invite_token {
         let mut redis = state.redis.clone();
-        let invite_data = invite::consume_invite(&mut redis, invite_id).await?;
+        let invite_data = invite::consume_invite(&mut redis, invite_token).await?;
         match invite_data {
             None => return Err(AppError::Gone("Invite link expired or already used".to_string())),
             Some(data) => {
@@ -93,7 +93,7 @@ async fn register(
 
     // Generate 12-word mnemonic
     let secret_phrase = wordlist::generate_mnemonic();
-    let secret_hash = crypto::hash_secret(&secret_phrase)?;
+    let secret_hash = crypto::hash_secret(&secret_phrase);
 
     let user_id = Uuid::now_v7();
 
@@ -125,60 +125,50 @@ async fn register(
 }
 
 /// POST /api/auth/login
-/// Verify 12-word secret phrase, return JWT.
+/// Verify 12-word secret phrase via SHA-256 indexed lookup. O(1).
 async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let phrase = body.secret_phrase.trim().to_lowercase();
+    // Normalize and hash — same normalization as register
+    let secret_hash = crypto::hash_secret(&body.secret_phrase);
 
-    // Validate format: exactly 12 words
-    let word_count = phrase.split_whitespace().count();
-    if word_count != 12 {
-        return Err(AppError::BadRequest(
-            "Secret phrase must be exactly 12 words".to_string(),
-        ));
-    }
-
-    // Find all active users and check hash (argon2 requires sequential comparison)
-    // For scalability, we could add a prefix index — but for MVP this is fine.
-    let users = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
-        "SELECT id, secret_hash, nickname FROM users WHERE is_active = TRUE",
+    // Direct indexed lookup — no scanning
+    let row = sqlx::query_as::<_, (Uuid, Option<String>)>(
+        "SELECT id, nickname FROM users WHERE secret_hash = $1 AND is_active = TRUE",
     )
-    .fetch_all(&state.db)
+    .bind(&secret_hash)
+    .fetch_optional(&state.db)
     .await?;
 
-    for (user_id, secret_hash, nickname) in &users {
-        if crypto::verify_secret(&phrase, secret_hash)? {
-            // Update last_seen_at
-            sqlx::query("UPDATE users SET last_seen_at = NOW() WHERE id = $1")
-                .bind(user_id)
-                .execute(&state.db)
-                .await?;
+    let (user_id, nickname) = row
+        .ok_or_else(|| AppError::Unauthorized("Invalid secret phrase".to_string()))?;
 
-            let token = crypto::issue_jwt(
-                *user_id,
-                nickname,
-                &state.config.jwt_secret,
-                state.config.jwt_expiry_secs,
-            )?;
+    // Update last_seen_at
+    sqlx::query("UPDATE users SET last_seen_at = NOW() WHERE id = $1")
+        .bind(user_id)
+        .execute(&state.db)
+        .await?;
 
-            let resp = LoginResponse {
-                token,
-                expires_in: state.config.jwt_expiry_secs,
-                user_id: *user_id,
-                nickname: nickname.clone(),
-            };
+    let token = crypto::issue_jwt(
+        user_id,
+        &nickname,
+        &state.config.jwt_secret,
+        state.config.jwt_expiry_secs,
+    )?;
 
-            return Ok(Json(serde_json::json!({
-                "success": true,
-                "data": resp,
-                "error": null
-            })));
-        }
-    }
+    let resp = LoginResponse {
+        token,
+        expires_in: state.config.jwt_expiry_secs,
+        user_id,
+        nickname,
+    };
 
-    Err(AppError::Unauthorized("Invalid secret phrase".to_string()))
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "data": resp,
+        "error": null
+    })))
 }
 
 /// PUT /api/auth/nickname

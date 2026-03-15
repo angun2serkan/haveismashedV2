@@ -12,7 +12,11 @@ pub struct DateEntry {
     pub gender: String,
     pub age_range: String,
     pub description: Option<String>,
+    pub person_nickname: Option<String>,
     pub rating: i32,
+    pub face_rating: Option<i32>,
+    pub body_rating: Option<i32>,
+    pub chat_rating: Option<i32>,
     pub date_at: NaiveDate,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -26,9 +30,13 @@ pub struct CreateDateRequest {
     pub gender: String,
     pub age_range: String,
     pub description: Option<String>,
+    pub person_nickname: Option<String>,
     pub rating: i32,
+    pub face_rating: Option<i32>,
+    pub body_rating: Option<i32>,
+    pub chat_rating: Option<i32>,
     pub date_at: NaiveDate,
-    /// Tag IDs to associate with this date (meeting, venue, activity, physical tags).
+    /// Tag IDs to associate with this date (meeting, venue, activity, physical, face, personality tags).
     pub tag_ids: Vec<i32>,
 }
 
@@ -39,7 +47,11 @@ pub struct UpdateDateRequest {
     pub gender: Option<String>,
     pub age_range: Option<String>,
     pub description: Option<String>,
+    pub person_nickname: Option<String>,
     pub rating: Option<i32>,
+    pub face_rating: Option<i32>,
+    pub body_rating: Option<i32>,
+    pub chat_rating: Option<i32>,
     pub date_at: Option<NaiveDate>,
     /// If provided, replaces all existing tag associations.
     pub tag_ids: Option<Vec<i32>>,

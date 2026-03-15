@@ -13,6 +13,9 @@ pub struct StatsResponse {
     pub unique_countries: i64,
     pub unique_cities: i64,
     pub average_rating: Option<f64>,
+    pub average_face_rating: Option<f64>,
+    pub average_body_rating: Option<f64>,
+    pub average_chat_rating: Option<f64>,
 }
 
 pub fn router() -> Router<AppState> {
@@ -24,13 +27,16 @@ async fn get_stats(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let row = sqlx::query_as::<_, (i64, i64, i64, Option<f64>)>(
+    let row = sqlx::query_as::<_, (i64, i64, i64, Option<f64>, Option<f64>, Option<f64>, Option<f64>)>(
         r#"
         SELECT
             COUNT(*) AS total_dates,
             COUNT(DISTINCT country_code) AS unique_countries,
             COUNT(DISTINCT city_id) AS unique_cities,
-            AVG(rating)::float8 AS average_rating
+            AVG(rating)::float8 AS average_rating,
+            AVG(face_rating)::float8 AS average_face_rating,
+            AVG(body_rating)::float8 AS average_body_rating,
+            AVG(chat_rating)::float8 AS average_chat_rating
         FROM dates
         WHERE user_id = $1 AND deleted_at IS NULL
         "#,
@@ -44,6 +50,9 @@ async fn get_stats(
         unique_countries: row.1,
         unique_cities: row.2,
         average_rating: row.3,
+        average_face_rating: row.4,
+        average_body_rating: row.5,
+        average_chat_rating: row.6,
     };
 
     Ok(Json(serde_json::json!({
