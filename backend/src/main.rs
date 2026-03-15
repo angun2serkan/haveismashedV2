@@ -7,6 +7,7 @@ mod services;
 use axum::Router;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
@@ -54,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .nest("/api", handlers::api_router())
+        .nest_service("/uploads", ServeDir::new("uploads"))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state);

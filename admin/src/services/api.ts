@@ -21,7 +21,10 @@ export const adminApi = {
   getMetrics: () => request<{ totalUsers: number; totalDates: number; dailyActiveUsers: number }>('/admin/metrics'),
 
   // Cities
-  getCities: () => request<Array<{ id: number; name: string; country_code: string; latitude: number; longitude: number; population: number | null }>>('/admin/cities'),
+  getCities: (country_code?: string) => {
+    const params = country_code ? `?country_code=${encodeURIComponent(country_code)}` : '';
+    return request<Array<{ id: number; name: string; country_code: string; latitude: number; longitude: number; population: number | null }>>(`/admin/cities${params}`);
+  },
   createCity: (data: { name: string; country_code: string; latitude: number; longitude: number; population?: number }) =>
     request<{ id: number }>('/admin/cities', { method: 'POST', body: JSON.stringify(data) }),
   updateCity: (id: number, data: Record<string, unknown>) =>
@@ -30,13 +33,32 @@ export const adminApi = {
     request<null>(`/admin/cities/${id}`, { method: 'DELETE' }),
 
   // Badges
-  getBadges: () => request<Array<{ id: number; name: string; description: string; icon: string; category: string; threshold: number; image_url: string | null }>>('/admin/badges'),
-  createBadge: (data: { name: string; description: string; icon: string; category: string; threshold: number; image_url?: string }) =>
+  getBadges: (gender?: string) => {
+    const params = gender ? `?gender=${encodeURIComponent(gender)}` : '';
+    return request<Array<{ id: number; name: string; description: string; icon: string; category: string; threshold: number; image_url: string | null; gender: 'male' | 'female' | 'both' }>>(`/admin/badges${params}`);
+  },
+  createBadge: (data: { name: string; description: string; icon: string; category: string; threshold: number; image_url?: string; gender?: string }) =>
     request<{ id: number }>('/admin/badges', { method: 'POST', body: JSON.stringify(data) }),
   updateBadge: (id: number, data: Record<string, unknown>) =>
     request<{ id: number }>(`/admin/badges/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteBadge: (id: number) =>
     request<null>(`/admin/badges/${id}`, { method: 'DELETE' }),
+  uploadBadgeImage: async (file: File): Promise<{ url: string }> => {
+    const apiKey = useAdminStore.getState().apiKey;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${API_BASE}/admin/badges/upload`, {
+      method: 'POST',
+      headers: {
+        ...(apiKey ? { 'X-Admin-Key': apiKey } : {}),
+      },
+      body: formData,
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error ?? 'Upload failed');
+    return json.data as { url: string };
+  },
 
   // Notifications
   sendNotification: (data: { user_id?: string; title: string; message: string }) =>

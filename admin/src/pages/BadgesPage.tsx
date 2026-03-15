@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Plus, Pencil, Trash2, X, Check } from 'lucide-react'
+import { useEffect, useState, useMemo, type FormEvent, type ChangeEvent } from 'react'
+import { Plus, Pencil, Trash2, X, Check, Upload, Filter } from 'lucide-react'
 import { adminApi } from '@/services/api'
 
 interface BadgeRow {
@@ -10,9 +10,18 @@ interface BadgeRow {
   category: string
   threshold: number
   image_url: string | null
+  gender: 'male' | 'female' | 'both'
 }
 
 const categories = ['dates', 'explore', 'social', 'quality'] as const
+const genderOptions = ['both', 'male', 'female'] as const
+type GenderFilter = 'all' | 'male' | 'female' | 'both'
+
+const genderSymbol: Record<string, string> = {
+  male: '\u2642',
+  female: '\u2640',
+  both: '\u26A5',
+}
 
 const emptyForm = {
   name: '',
@@ -21,15 +30,19 @@ const emptyForm = {
   category: 'dates' as string,
   threshold: '',
   image_url: '',
+  gender: 'both' as string,
 }
 
 export default function BadgesPage() {
   const [badges, setBadges] = useState<BadgeRow[]>([])
   const [form, setForm] = useState(emptyForm)
   const [loading, setLoading] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [editId, setEditId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState(emptyForm)
+  const [editUploading, setEditUploading] = useState(false)
+  const [genderFilter, setGenderFilter] = useState<GenderFilter>('all')
 
   function fetchBadges() {
     adminApi
@@ -42,6 +55,39 @@ export default function BadgesPage() {
     fetchBadges()
   }, [])
 
+  const filteredBadges = useMemo(() => {
+    if (genderFilter === 'all') return badges
+    return badges.filter((b) => b.gender === genderFilter)
+  }, [badges, genderFilter])
+
+  async function handleImageUpload(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const result = await adminApi.uploadBadgeImage(file)
+      setForm({ ...form, image_url: result.url })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload image')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function handleEditImageUpload(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setEditUploading(true)
+    try {
+      const result = await adminApi.uploadBadgeImage(file)
+      setEditForm({ ...editForm, image_url: result.url })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to upload image')
+    } finally {
+      setEditUploading(false)
+    }
+  }
+
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
     setLoading(true)
@@ -53,6 +99,7 @@ export default function BadgesPage() {
         icon: form.icon,
         category: form.category,
         threshold: parseInt(form.threshold),
+        gender: form.gender,
         ...(form.image_url ? { image_url: form.image_url } : {}),
       })
       setForm(emptyForm)
@@ -83,6 +130,7 @@ export default function BadgesPage() {
       category: badge.category,
       threshold: String(badge.threshold),
       image_url: badge.image_url ?? '',
+      gender: badge.gender ?? 'both',
     })
   }
 
@@ -94,6 +142,7 @@ export default function BadgesPage() {
         icon: editForm.icon,
         category: editForm.category,
         threshold: parseInt(editForm.threshold),
+        gender: editForm.gender,
         ...(editForm.image_url ? { image_url: editForm.image_url } : {}),
       })
       setEditId(null)
@@ -106,6 +155,13 @@ export default function BadgesPage() {
   const inputClass =
     'px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors'
 
+  const genderFilterOptions: { label: string; value: GenderFilter }[] = [
+    { label: 'All', value: 'all' },
+    { label: 'Male', value: 'male' },
+    { label: 'Female', value: 'female' },
+    { label: 'Both', value: 'both' },
+  ]
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">Badges</h2>
@@ -116,7 +172,7 @@ export default function BadgesPage() {
           Create Badge
         </h3>
         <form onSubmit={handleCreate} className="space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <input
               placeholder="Name"
               value={form.name}
@@ -150,6 +206,17 @@ export default function BadgesPage() {
               required
               className={inputClass}
             />
+            <select
+              value={form.gender}
+              onChange={(e) => setForm({ ...form, gender: e.target.value })}
+              className={`${inputClass} appearance-none`}
+            >
+              {genderOptions.map((g) => (
+                <option key={g} value={g}>
+                  {g.charAt(0).toUpperCase() + g.slice(1)}
+                </option>
+              ))}
+            </select>
           </div>
           <input
             placeholder="Description"
@@ -158,13 +225,39 @@ export default function BadgesPage() {
             required
             className={`${inputClass} w-full`}
           />
-          <div className="flex gap-3">
-            <input
-              placeholder="Image URL (optional)"
-              value={form.image_url}
-              onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-              className={`${inputClass} flex-1`}
-            />
+          <div className="flex gap-3 items-center">
+            <div className="flex-1">
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2 px-4 py-2 bg-dark-700 border border-dark-600 rounded-lg text-dark-300 hover:bg-dark-600 hover:text-white transition-colors cursor-pointer text-sm">
+                  <Upload size={16} />
+                  {uploading ? 'Uploading...' : 'Upload Image'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    disabled={uploading}
+                  />
+                </label>
+                {form.image_url && (
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={form.image_url}
+                      alt="Preview"
+                      className="w-8 h-8 rounded object-cover border border-dark-600"
+                    />
+                    <span className="text-xs text-dark-400 truncate max-w-[200px]">{form.image_url}</span>
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, image_url: '' })}
+                      className="p-1 rounded bg-dark-700 text-dark-400 hover:bg-dark-600 hover:text-white transition-colors"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
             <button
               type="submit"
               disabled={loading}
@@ -183,9 +276,36 @@ export default function BadgesPage() {
         </div>
       )}
 
+      {/* Gender Filter */}
+      <div className="flex items-center gap-3 mb-4">
+        <Filter size={16} className="text-dark-400" />
+        <span className="text-sm text-dark-400">Filter by gender:</span>
+        <div className="flex gap-1">
+          {genderFilterOptions.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setGenderFilter(opt.value)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                genderFilter === opt.value
+                  ? 'bg-neon-500/20 text-neon-400 border border-neon-500/30'
+                  : 'bg-dark-800 text-dark-400 border border-dark-700 hover:bg-dark-700 hover:text-dark-300'
+              }`}
+            >
+              {opt.value !== 'all' && <span className="mr-1">{genderSymbol[opt.value]}</span>}
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {genderFilter !== 'all' && (
+          <span className="text-xs text-dark-500">
+            {filteredBadges.length} of {badges.length} badges
+          </span>
+        )}
+      </div>
+
       {/* Badge Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {badges.map((badge) => (
+        {filteredBadges.map((badge) => (
           <div
             key={badge.id}
             className="bg-dark-800 border border-dark-700 rounded-xl p-5"
@@ -210,7 +330,7 @@ export default function BadgesPage() {
                   className={`${inputClass} w-full text-sm`}
                   placeholder="Description"
                 />
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <select
                     value={editForm.category}
                     onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
@@ -229,13 +349,47 @@ export default function BadgesPage() {
                     className={`${inputClass} text-sm`}
                     placeholder="Threshold"
                   />
+                  <select
+                    value={editForm.gender}
+                    onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
+                    className={`${inputClass} text-sm appearance-none`}
+                  >
+                    {genderOptions.map((g) => (
+                      <option key={g} value={g}>
+                        {g.charAt(0).toUpperCase() + g.slice(1)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <input
-                  value={editForm.image_url}
-                  onChange={(e) => setEditForm({ ...editForm, image_url: e.target.value })}
-                  className={`${inputClass} w-full text-sm`}
-                  placeholder="Image URL (optional)"
-                />
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-dark-700 border border-dark-600 rounded-lg text-dark-300 hover:bg-dark-600 hover:text-white transition-colors cursor-pointer text-xs">
+                    <Upload size={14} />
+                    {editUploading ? 'Uploading...' : 'Upload Image'}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleEditImageUpload}
+                      className="hidden"
+                      disabled={editUploading}
+                    />
+                  </label>
+                  {editForm.image_url && (
+                    <div className="flex items-center gap-1.5">
+                      <img
+                        src={editForm.image_url}
+                        alt="Preview"
+                        className="w-6 h-6 rounded object-cover border border-dark-600"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditForm({ ...editForm, image_url: '' })}
+                        className="p-0.5 rounded bg-dark-700 text-dark-400 hover:bg-dark-600 hover:text-white transition-colors"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="flex gap-2 pt-1">
                   <button
                     onClick={() => handleEditSave(badge.id)}
@@ -255,12 +409,42 @@ export default function BadgesPage() {
               <>
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
-                    <span className="text-3xl">{badge.icon}</span>
+                    {badge.image_url ? (
+                      <img
+                        src={badge.image_url}
+                        alt={badge.name}
+                        className="w-10 h-10 rounded-lg object-cover border border-dark-600"
+                      />
+                    ) : (
+                      <span className="text-3xl">{badge.icon}</span>
+                    )}
                     <div>
                       <h4 className="font-semibold text-white">{badge.name}</h4>
-                      <span className="text-xs text-neon-400 bg-neon-500/10 px-2 py-0.5 rounded-full">
-                        {badge.category}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-neon-400 bg-neon-500/10 px-2 py-0.5 rounded-full">
+                          {badge.category}
+                        </span>
+                        <span
+                          className="text-xs px-2 py-0.5 rounded-full"
+                          title={badge.gender}
+                          style={{
+                            backgroundColor:
+                              badge.gender === 'male'
+                                ? 'rgba(59, 130, 246, 0.15)'
+                                : badge.gender === 'female'
+                                ? 'rgba(236, 72, 153, 0.15)'
+                                : 'rgba(168, 85, 247, 0.15)',
+                            color:
+                              badge.gender === 'male'
+                                ? '#60a5fa'
+                                : badge.gender === 'female'
+                                ? '#f472b6'
+                                : '#c084fc',
+                          }}
+                        >
+                          {genderSymbol[badge.gender] ?? '\u26A5'}
+                        </span>
+                      </div>
                     </div>
                   </div>
                   <div className="flex gap-1">
@@ -286,7 +470,7 @@ export default function BadgesPage() {
             )}
           </div>
         ))}
-        {badges.length === 0 && (
+        {filteredBadges.length === 0 && (
           <div className="col-span-full text-center text-dark-500 py-8">
             No badges found
           </div>

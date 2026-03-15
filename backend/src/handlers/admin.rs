@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
@@ -50,6 +50,7 @@ pub struct CreateBadgeRequest {
     pub category: String,
     pub threshold: i32,
     pub image_url: Option<String>,
+    pub gender: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +61,17 @@ pub struct UpdateBadgeRequest {
     pub category: Option<String>,
     pub threshold: Option<i32>,
     pub image_url: Option<String>,
+    pub gender: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ListBadgesQuery {
+    pub gender: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ListCitiesQuery {
+    pub country_code: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -81,10 +93,9 @@ pub fn router() -> Router<AppState> {
         .route("/cities/{id}", put(update_city))
         .route("/cities/{id}", delete(delete_city))
         // Badges
-        .route("/badges", get(list_badges))
-        .route("/badges", post(create_badge))
-        .route("/badges/{id}", put(update_badge))
-        .route("/badges/{id}", delete(delete_badge))
+        .route("/badges/upload", post(upload_badge_image))
+        .route("/badges", get(list_badges).post(create_badge))
+        .route("/badges/{id}", put(update_badge).delete(delete_badge))
         // Notifications
         .route("/notifications", post(send_notification))
         .route("/notifications", get(list_notifications))
@@ -144,19 +155,34 @@ async fn get_metrics(
 async fn list_cities(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(params): Query<ListCitiesQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     verify_admin(&headers, &state.config)?;
 
     use sqlx::Row;
-    let rows = sqlx::query(
-        r#"
-        SELECT id, name, country_code, ST_X(location) as lng, ST_Y(location) as lat, population
-        FROM cities
-        ORDER BY country_code, population DESC NULLS LAST, name
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows = if let Some(ref country_code) = params.country_code {
+        sqlx::query(
+            r#"
+            SELECT id, name, country_code, ST_X(location) as lng, ST_Y(location) as lat, population
+            FROM cities
+            WHERE country_code = $1
+            ORDER BY country_code, population DESC NULLS LAST, name
+            "#,
+        )
+        .bind(country_code)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+            SELECT id, name, country_code, ST_X(location) as lng, ST_Y(location) as lat, population
+            FROM cities
+            ORDER BY country_code, population DESC NULLS LAST, name
+            "#,
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let cities: Vec<serde_json::Value> = rows
         .iter()
@@ -304,15 +330,25 @@ async fn delete_city(
 async fn list_badges(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(params): Query<ListBadgesQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     verify_admin(&headers, &state.config)?;
 
     use sqlx::Row;
-    let rows = sqlx::query(
-        "SELECT id, name, description, icon, category, threshold, image_url FROM badges ORDER BY id",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows = if let Some(ref gender) = params.gender {
+        sqlx::query(
+            "SELECT id, name, description, icon, category, threshold, image_url, gender FROM badges WHERE gender = $1 OR gender = 'both' ORDER BY id",
+        )
+        .bind(gender)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT id, name, description, icon, category, threshold, image_url, gender FROM badges ORDER BY id",
+        )
+        .fetch_all(&state.db)
+        .await?
+    };
 
     let badges: Vec<serde_json::Value> = rows
         .iter()
@@ -325,6 +361,7 @@ async fn list_badges(
                 "category": r.get::<String, _>("category"),
                 "threshold": r.get::<i32, _>("threshold"),
                 "image_url": r.get::<Option<String>, _>("image_url"),
+                "gender": r.get::<Option<String>, _>("gender"),
             })
         })
         .collect();
@@ -340,8 +377,10 @@ async fn create_badge(
 ) -> Result<Json<serde_json::Value>, AppError> {
     verify_admin(&headers, &state.config)?;
 
+    let gender = body.gender.as_deref().unwrap_or("both");
+
     let id = sqlx::query_scalar::<_, i32>(
-        "INSERT INTO badges (name, description, icon, category, threshold, image_url) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+        "INSERT INTO badges (name, description, icon, category, threshold, image_url, gender) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
     )
     .bind(&body.name)
     .bind(&body.description)
@@ -349,6 +388,7 @@ async fn create_badge(
     .bind(&body.category)
     .bind(body.threshold)
     .bind(&body.image_url)
+    .bind(gender)
     .fetch_one(&state.db)
     .await?;
 
@@ -362,6 +402,7 @@ async fn create_badge(
             "category": body.category,
             "threshold": body.threshold,
             "image_url": body.image_url,
+            "gender": gender,
         },
         "error": null
     })))
@@ -433,7 +474,71 @@ async fn update_badge(
             .await?;
     }
 
+    if let Some(ref gender) = body.gender {
+        sqlx::query("UPDATE badges SET gender = $1 WHERE id = $2")
+            .bind(gender)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+
     Ok(Json(json!({ "success": true, "data": { "id": id, "message": "Badge updated" }, "error": null })))
+}
+
+/// POST /api/admin/badges/upload
+/// Upload a badge image. Returns the file path.
+async fn upload_badge_image(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut multipart: axum::extract::Multipart,
+) -> Result<Json<serde_json::Value>, AppError> {
+    verify_admin(&headers, &state.config)?;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Multipart error: {e}")))?
+    {
+        let filename = field
+            .file_name()
+            .map(|f| f.to_string())
+            .unwrap_or_else(|| format!("{}.png", uuid::Uuid::new_v4()));
+
+        // Sanitize filename
+        let safe_name = format!(
+            "{}_{}",
+            chrono::Utc::now().timestamp_millis(),
+            filename.replace(
+                |c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_',
+                "_"
+            )
+        );
+
+        let data = field
+            .bytes()
+            .await
+            .map_err(|e| AppError::BadRequest(format!("Read error: {e}")))?;
+
+        // Ensure directory exists
+        tokio::fs::create_dir_all("uploads/badges")
+            .await
+            .map_err(|e| AppError::Internal(format!("Dir create error: {e}")))?;
+
+        let path = format!("uploads/badges/{safe_name}");
+        tokio::fs::write(&path, &data)
+            .await
+            .map_err(|e| AppError::Internal(format!("Write error: {e}")))?;
+
+        let url = format!("/uploads/badges/{safe_name}");
+
+        return Ok(Json(json!({
+            "success": true,
+            "data": { "url": url, "filename": safe_name },
+            "error": null
+        })));
+    }
+
+    Err(AppError::BadRequest("No file provided".to_string()))
 }
 
 /// DELETE /api/admin/badges/:id

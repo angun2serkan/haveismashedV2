@@ -1,6 +1,18 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Plus, Pencil, Trash2, X, Check } from 'lucide-react'
+import { useEffect, useState, useRef, useMemo, useCallback, type FormEvent } from 'react'
+import { Plus, Pencil, Trash2, X, Check, MapPin, Filter, ArrowLeft } from 'lucide-react'
 import { adminApi } from '@/services/api'
+import { MapContainer, TileLayer, GeoJSON, Marker, useMapEvents, useMap } from 'react-leaflet'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+
+// Fix default marker icon
+const defaultIcon = L.icon({
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+})
 
 interface CityRow {
   id: number
@@ -13,6 +25,212 @@ interface CityRow {
 
 const emptyForm = { name: '', country_code: '', latitude: '', longitude: '', population: '' }
 
+// Click handler component for Leaflet
+function ClickHandler({ onSelect }: { onSelect: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onSelect(
+        parseFloat(e.latlng.lat.toFixed(6)),
+        parseFloat(e.latlng.lng.toFixed(6))
+      )
+    },
+  })
+  return null
+}
+
+// Zoom to bounds component
+function ZoomToBounds({ bounds }: { bounds: L.LatLngBoundsExpression | null }) {
+  const map = useMap()
+  useEffect(() => {
+    if (bounds) {
+      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 })
+    }
+  }, [bounds, map])
+  return null
+}
+
+type PickerStep = 'world' | 'country'
+
+function CoordPicker({
+  onSelect,
+  onClose,
+  onCountryCodeDetected,
+}: {
+  onSelect: (lat: number, lng: number) => void
+  onClose: () => void
+  onCountryCodeDetected?: (code: string) => void
+}) {
+  const [step, setStep] = useState<PickerStep>('world')
+  const [countriesGeo, setCountriesGeo] = useState<any>(null)
+  const [selectedCountry, setSelectedCountry] = useState<any>(null)
+  const [selectedCountryName, setSelectedCountryName] = useState('')
+  const [selectedCountryCode, setSelectedCountryCode] = useState('')
+  const [marker, setMarker] = useState<[number, number] | null>(null)
+  const [countryBounds, setCountryBounds] = useState<L.LatLngBoundsExpression | null>(null)
+  const geoJsonKeyRef = useRef(0)
+
+  // Load world GeoJSON
+  useEffect(() => {
+    fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
+      .then((r) => r.json())
+      .then(setCountriesGeo)
+      .catch(() => {})
+  }, [])
+
+  const handleCountryClick = useCallback(
+    (feature: any) => {
+      const props = feature.properties
+      const code = props.ISO_A2 || props.ISO_A2_EH || ''
+      const name = props.ADMIN || props.name || ''
+
+      setSelectedCountry({ type: 'FeatureCollection', features: [feature] })
+      setSelectedCountryName(name)
+      setSelectedCountryCode(code)
+      if (code && onCountryCodeDetected) onCountryCodeDetected(code)
+
+      // Calculate bounds
+      const geoLayer = L.geoJSON(feature)
+      setCountryBounds(geoLayer.getBounds())
+      setStep('country')
+      setMarker(null)
+      geoJsonKeyRef.current += 1
+    },
+    [onCountryCodeDetected]
+  )
+
+  const handlePointSelect = useCallback(
+    (lat: number, lng: number) => {
+      setMarker([lat, lng])
+    },
+    []
+  )
+
+  const handleConfirm = () => {
+    if (marker) {
+      onSelect(marker[0], marker[1])
+      onClose()
+    }
+  }
+
+  const worldStyle = () => ({
+    fillColor: '#1a1a2e',
+    fillOpacity: 0.8,
+    color: '#333355',
+    weight: 1,
+  })
+
+  const countryStyle = () => ({
+    fillColor: '#ff007f',
+    fillOpacity: 0.1,
+    color: '#ff007f',
+    weight: 2,
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+      <div className="bg-dark-800 rounded-xl w-full max-w-[1200px] h-[90vh] relative border border-dark-700 flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-dark-700">
+          <div className="flex items-center gap-3">
+            {step === 'country' && (
+              <button
+                onClick={() => { setStep('world'); setMarker(null); setSelectedCountry(null) }}
+                className="p-1.5 rounded bg-dark-700 text-dark-400 hover:bg-dark-600 hover:text-white transition-colors"
+              >
+                <ArrowLeft size={16} />
+              </button>
+            )}
+            <p className="text-sm text-dark-200">
+              {step === 'world'
+                ? 'Select a country by clicking on it'
+                : `${selectedCountryName} (${selectedCountryCode}) — Click on the map to place a marker`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {marker && (
+              <>
+                <span className="text-xs text-dark-400 font-mono">
+                  {marker[0]}, {marker[1]}
+                </span>
+                <button
+                  onClick={handleConfirm}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-neon-500/20 text-neon-400 border border-neon-500/30 rounded-lg text-sm font-medium hover:bg-neon-500/30 transition-colors"
+                >
+                  <Check size={14} />
+                  Confirm
+                </button>
+              </>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded bg-dark-700 text-dark-400 hover:bg-dark-600 hover:text-white transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Map */}
+        <div className="flex-1 min-h-0">
+          {step === 'world' && countriesGeo && (
+            <MapContainer
+              center={[30, 20]}
+              zoom={2}
+              className="w-full h-full"
+              style={{ background: '#0a0a0f' }}
+              maxBounds={[[-90, -180], [90, 180]]}
+              minZoom={2}
+            >
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                attribution=""
+              />
+              <GeoJSON
+                data={countriesGeo}
+                style={worldStyle}
+                onEachFeature={(feature, layer) => {
+                  layer.on('click', () => handleCountryClick(feature))
+                  layer.on('mouseover', () => {
+                    (layer as any).setStyle({ fillColor: '#ff007f', fillOpacity: 0.3 })
+                  })
+                  layer.on('mouseout', () => {
+                    (layer as any).setStyle(worldStyle())
+                  })
+                  const name = feature.properties?.ADMIN || feature.properties?.name || ''
+                  layer.bindTooltip(name, { sticky: true, className: 'bg-dark-900 text-white border-dark-600 text-xs px-2 py-1 rounded' })
+                }}
+              />
+            </MapContainer>
+          )}
+          {step === 'country' && selectedCountry && (
+            <MapContainer
+              center={[30, 20]}
+              zoom={2}
+              className="w-full h-full"
+              style={{ background: '#0a0a0f' }}
+              key={`country-${geoJsonKeyRef.current}`}
+            >
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                attribution=""
+              />
+              <GeoJSON data={selectedCountry} style={countryStyle} />
+              <ZoomToBounds bounds={countryBounds} />
+              <ClickHandler onSelect={handlePointSelect} />
+              {marker && <Marker position={marker} icon={defaultIcon} />}
+            </MapContainer>
+          )}
+          {!countriesGeo && (
+            <div className="w-full h-full flex items-center justify-center text-dark-400 text-sm">
+              Loading map data...
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function CitiesPage() {
   const [cities, setCities] = useState<CityRow[]>([])
   const [form, setForm] = useState(emptyForm)
@@ -20,6 +238,8 @@ export default function CitiesPage() {
   const [error, setError] = useState('')
   const [editId, setEditId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState(emptyForm)
+  const [showCoordPicker, setShowCoordPicker] = useState(false)
+  const [countryFilter, setCountryFilter] = useState('')
 
   function fetchCities() {
     adminApi
@@ -31,6 +251,18 @@ export default function CitiesPage() {
   useEffect(() => {
     fetchCities()
   }, [])
+
+  // Get distinct country codes from cities for the filter dropdown
+  const countryCodes = useMemo(() => {
+    const codes = [...new Set(cities.map((c) => c.country_code))].sort()
+    return codes
+  }, [cities])
+
+  // Filter cities by selected country code
+  const filteredCities = useMemo(() => {
+    if (!countryFilter) return cities
+    return cities.filter((c) => c.country_code === countryFilter)
+  }, [cities, countryFilter])
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault()
@@ -90,6 +322,10 @@ export default function CitiesPage() {
     }
   }
 
+  function handleCoordSelect(lat: number, lng: number) {
+    setForm({ ...form, latitude: String(lat), longitude: String(lng) })
+  }
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6">Cities</h2>
@@ -99,55 +335,71 @@ export default function CitiesPage() {
         <h3 className="text-sm font-semibold text-dark-300 uppercase tracking-wider mb-4">
           Add City
         </h3>
-        <form onSubmit={handleCreate} className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <input
-            placeholder="Name"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            required
-            className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
-          />
-          <input
-            placeholder="Country Code"
-            value={form.country_code}
-            onChange={(e) => setForm({ ...form, country_code: e.target.value })}
-            required
-            maxLength={2}
-            className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
-          />
-          <input
-            placeholder="Latitude"
-            type="number"
-            step="any"
-            value={form.latitude}
-            onChange={(e) => setForm({ ...form, latitude: e.target.value })}
-            required
-            className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
-          />
-          <input
-            placeholder="Longitude"
-            type="number"
-            step="any"
-            value={form.longitude}
-            onChange={(e) => setForm({ ...form, longitude: e.target.value })}
-            required
-            className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
-          />
-          <input
-            placeholder="Population"
-            type="number"
-            value={form.population}
-            onChange={(e) => setForm({ ...form, population: e.target.value })}
-            className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex items-center justify-center gap-2 py-2 bg-neon-500/20 text-neon-400 border border-neon-500/30 rounded-lg font-medium hover:bg-neon-500/30 transition-colors disabled:opacity-50"
-          >
-            <Plus size={16} />
-            Add
-          </button>
+        <form onSubmit={handleCreate} className="space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <input
+              placeholder="Name"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+              className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
+            />
+            <input
+              placeholder="Country Code"
+              value={form.country_code}
+              onChange={(e) => setForm({ ...form, country_code: e.target.value })}
+              required
+              maxLength={2}
+              className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
+            />
+            <input
+              placeholder="Population"
+              type="number"
+              value={form.population}
+              onChange={(e) => setForm({ ...form, population: e.target.value })}
+              className="px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex items-center justify-center gap-2 py-2 bg-neon-500/20 text-neon-400 border border-neon-500/30 rounded-lg font-medium hover:bg-neon-500/30 transition-colors disabled:opacity-50"
+            >
+              <Plus size={16} />
+              Add
+            </button>
+          </div>
+          <div className="flex gap-3 items-end">
+            <div className="flex-1">
+              <input
+                placeholder="Latitude"
+                type="number"
+                step="any"
+                value={form.latitude}
+                onChange={(e) => setForm({ ...form, latitude: e.target.value })}
+                required
+                className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
+              />
+            </div>
+            <div className="flex-1">
+              <input
+                placeholder="Longitude"
+                type="number"
+                step="any"
+                value={form.longitude}
+                onChange={(e) => setForm({ ...form, longitude: e.target.value })}
+                required
+                className="w-full px-3 py-2 bg-dark-900 border border-dark-600 rounded-lg text-white placeholder-dark-500 focus:outline-none focus:border-neon-500 transition-colors"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCoordPicker(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-purple-500/20 text-purple-400 border border-purple-500/30 rounded-lg font-medium hover:bg-purple-500/30 transition-colors whitespace-nowrap"
+            >
+              <MapPin size={16} />
+              Pick from Map
+            </button>
+          </div>
         </form>
       </div>
 
@@ -156,6 +408,29 @@ export default function CitiesPage() {
           {error}
         </div>
       )}
+
+      {/* Country Filter */}
+      <div className="flex items-center gap-3 mb-4">
+        <Filter size={16} className="text-dark-400" />
+        <span className="text-sm text-dark-400">Filter by country:</span>
+        <select
+          value={countryFilter}
+          onChange={(e) => setCountryFilter(e.target.value)}
+          className="px-3 py-1.5 bg-dark-800 border border-dark-600 rounded-lg text-white text-sm focus:outline-none focus:border-neon-500 transition-colors appearance-none pr-8"
+        >
+          <option value="">All</option>
+          {countryCodes.map((code) => (
+            <option key={code} value={code}>
+              {code.toUpperCase()}
+            </option>
+          ))}
+        </select>
+        {countryFilter && (
+          <span className="text-xs text-dark-500">
+            {filteredCities.length} of {cities.length} cities
+          </span>
+        )}
+      </div>
 
       {/* Cities Table */}
       <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
@@ -172,7 +447,7 @@ export default function CitiesPage() {
             </tr>
           </thead>
           <tbody>
-            {cities.map((city) => (
+            {filteredCities.map((city) => (
               <tr key={city.id} className="border-b border-dark-700/50 hover:bg-dark-900/50">
                 {editId === city.id ? (
                   <>
@@ -261,7 +536,7 @@ export default function CitiesPage() {
                 )}
               </tr>
             ))}
-            {cities.length === 0 && (
+            {filteredCities.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-dark-500">
                   No cities found
@@ -271,6 +546,15 @@ export default function CitiesPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Coordinate Picker Modal */}
+      {showCoordPicker && (
+        <CoordPicker
+          onSelect={handleCoordSelect}
+          onClose={() => setShowCoordPicker(false)}
+          onCountryCodeDetected={(code) => setForm((f) => ({ ...f, country_code: code }))}
+        />
+      )}
     </div>
   )
 }
