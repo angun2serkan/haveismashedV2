@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   Globe,
@@ -5,8 +6,10 @@ import {
   Users,
   Settings,
   LogOut,
+  Bell,
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
+import { api } from "@/services/api";
 
 const navItems = [
   { path: "/", icon: Globe, label: "Globe" },
@@ -18,8 +21,32 @@ const navItems = [
 export function Navbar() {
   const location = useLocation();
   const { isAuthenticated, user, logout } = useAuthStore();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fetchCount = () => {
+      api.getUnreadCount().then(setUnreadCount).catch(() => {});
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 30000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   if (!isAuthenticated) return null;
+
+  const isNotificationsActive = location.pathname === "/notifications";
+
+  const bellIcon = (
+    <div className="relative">
+      <Bell size={20} />
+      {unreadCount > 0 && (
+        <span className="absolute -top-1 -right-1 w-4 h-4 bg-neon-500 rounded-full text-[10px] font-bold flex items-center justify-center text-white">
+          {unreadCount > 9 ? "9+" : unreadCount}
+        </span>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -47,6 +74,20 @@ export function Navbar() {
           );
         })}
         <div className="mt-auto flex flex-col items-center gap-2">
+          <Link
+            to="/notifications"
+            className={`flex items-center justify-center w-10 h-10 rounded-lg transition-all duration-200 group relative ${
+              isNotificationsActive
+                ? "bg-neon-500/20 text-neon-500 glow-sm"
+                : "text-dark-400 hover:text-neon-500 hover:bg-dark-800"
+            }`}
+            title="Notifications"
+          >
+            {bellIcon}
+            <span className="absolute left-14 px-2 py-1 bg-dark-800 border border-dark-600 rounded text-xs text-white opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap">
+              Notifications
+            </span>
+          </Link>
           {user?.nickname && (
             <span className="text-[10px] text-dark-400 truncate max-w-[56px] text-center">
               {user.nickname}
@@ -81,6 +122,17 @@ export function Navbar() {
             </Link>
           );
         })}
+        <Link
+          to="/notifications"
+          className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg transition-all ${
+            isNotificationsActive
+              ? "text-neon-500"
+              : "text-dark-400"
+          }`}
+        >
+          {bellIcon}
+          <span className="text-[10px]">Alerts</span>
+        </Link>
       </nav>
     </>
   );

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link2, Copy, Check, UserPlus, QrCode, AlertCircle } from "lucide-react";
+import { Copy, Check, UserPlus, QrCode, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { api } from "@/services/api";
@@ -9,7 +9,7 @@ export function InviteLink() {
   const [platformInvite, setPlatformInvite] = useState<InviteResponse | null>(null);
   const [friendInvite, setFriendInvite] = useState<InviteResponse | null>(null);
   const [copiedPlatform, setCopiedPlatform] = useState(false);
-  const [copiedFriend, setCopiedFriend] = useState(false);
+  const [copiedFriendCode, setCopiedFriendCode] = useState(false);
   const [loadingPlatform, setLoadingPlatform] = useState(false);
   const [loadingFriend, setLoadingFriend] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,28 +27,29 @@ export function InviteLink() {
     }
   };
 
-  const generateFriendLink = async () => {
+  const generateFriendCode = async () => {
     setLoadingFriend(true);
     setError(null);
     try {
       const result = await api.createInvite("friend");
       setFriendInvite(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create friend link");
+      setError(err instanceof Error ? err.message : "Failed to generate friend code");
     } finally {
       setLoadingFriend(false);
     }
   };
 
-  const handleCopy = async (link: string, type: "platform" | "friend") => {
+  const handleCopyPlatform = async (link: string) => {
     await navigator.clipboard.writeText(link);
-    if (type === "platform") {
-      setCopiedPlatform(true);
-      setTimeout(() => setCopiedPlatform(false), 2000);
-    } else {
-      setCopiedFriend(true);
-      setTimeout(() => setCopiedFriend(false), 2000);
-    }
+    setCopiedPlatform(true);
+    setTimeout(() => setCopiedPlatform(false), 2000);
+  };
+
+  const handleCopyFriendCode = async (code: string) => {
+    await navigator.clipboard.writeText(code);
+    setCopiedFriendCode(true);
+    setTimeout(() => setCopiedFriendCode(false), 2000);
   };
 
   const formatExpiry = (secs: number) => {
@@ -56,6 +57,11 @@ export function InviteLink() {
     const minutes = Math.floor((secs % 3600) / 60);
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
+  };
+
+  const formatCode = (code: string) => {
+    if (code.length <= 4) return code;
+    return `${code.slice(0, 4)} ${code.slice(4)}`;
   };
 
   return (
@@ -90,7 +96,7 @@ export function InviteLink() {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => handleCopy(platformInvite.link, "platform")}
+                onClick={() => handleCopyPlatform(platformInvite.link)}
               >
                 {copiedPlatform ? <Check size={14} /> : <Copy size={14} />}
               </Button>
@@ -110,32 +116,30 @@ export function InviteLink() {
         )}
       </Card>
 
-      {/* Friend Add Link */}
+      {/* Friend Code */}
       <Card className="space-y-3">
         <div className="flex items-center gap-2">
-          <Link2 size={18} className="text-neon-500" />
-          <h3 className="text-sm font-semibold text-white">Friend Link</h3>
+          <QrCode size={18} className="text-neon-500" />
+          <h3 className="text-sm font-semibold text-white">Friend Code</h3>
         </div>
 
         <p className="text-xs text-dark-400">
-          Create a friend add link to connect with existing users.
-          Share the link or let them scan the QR code.
+          Share this code or let them scan the QR to connect with existing users.
         </p>
 
         {friendInvite ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <input
-                readOnly
-                value={friendInvite.link}
-                className="flex-1 bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-xs font-mono text-dark-200 truncate"
-              />
+            {/* Code Display */}
+            <div className="flex items-center justify-center gap-3 bg-dark-900 border border-neon-500/30 rounded-xl px-4 py-4 shadow-[0_0_20px_rgba(255,0,127,0.15)]">
+              <span className="text-2xl font-mono font-bold tracking-[0.2em] text-white text-glow">
+                {formatCode(friendInvite.token)}
+              </span>
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={() => handleCopy(friendInvite.link, "friend")}
+                onClick={() => handleCopyFriendCode(friendInvite.token)}
               >
-                {copiedFriend ? <Check size={14} /> : <Copy size={14} />}
+                {copiedFriendCode ? <Check size={14} /> : <Copy size={14} />}
               </Button>
             </div>
 
@@ -162,11 +166,11 @@ export function InviteLink() {
           </div>
         ) : (
           <Button
-            onClick={generateFriendLink}
+            onClick={generateFriendCode}
             disabled={loadingFriend}
             className="w-full bg-neon-500/20 hover:bg-neon-500/30 text-neon-400 border border-neon-500/30 shadow-[0_0_15px_rgba(255,0,127,0.15)]"
           >
-            {loadingFriend ? "Generating..." : "Create Friend Link"}
+            {loadingFriend ? "Generating..." : "Generate Friend Code"}
           </Button>
         )}
       </Card>

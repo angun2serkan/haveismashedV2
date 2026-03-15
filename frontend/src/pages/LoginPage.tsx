@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { SeedPhraseInput } from "@/components/Auth/SeedPhraseInput";
 import { useAuthStore } from "@/stores/authStore";
+import { api } from "@/services/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 
@@ -41,7 +42,17 @@ export function LoginPage() {
         token,
       );
 
-      if (!nickname) {
+      const searchParams = new URLSearchParams(window.location.search);
+      const friendCode = searchParams.get("friend_code");
+
+      if (friendCode) {
+        try {
+          await api.addFriendByCode(friendCode);
+          navigate("/friends?added=true");
+        } catch {
+          navigate("/friends");
+        }
+      } else if (!nickname) {
         navigate("/nickname");
       } else {
         navigate("/");

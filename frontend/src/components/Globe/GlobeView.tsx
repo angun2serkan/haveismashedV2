@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import { useLogStore } from "@/stores/logStore";
+import { useFriendStore } from "@/stores/friendStore";
 import type { CountryFeature } from "@/types";
 import { CitySelector } from "./CitySelector";
 import { COUNTRY_CODE_MAP } from "@/data/countryCodeMap";
@@ -29,6 +30,7 @@ export function GlobeView() {
   const [zoomedCountry, setZoomedCountry] = useState<string | null>(null);
   const dates = useLogStore((s) => s.dates);
   const setSelectedCountry = useLogStore((s) => s.setSelectedCountry);
+  const friendDates = useFriendStore((s) => s.friendDates);
 
   // Build country date counts
   const countryDateCounts = useMemo(() => {
@@ -38,6 +40,72 @@ export function GlobeView() {
     }
     return counts;
   }, [dates]);
+
+  // Build globe points from user dates + friend dates
+  const allPoints = useMemo(() => {
+    interface GlobePoint {
+      lat: number;
+      lng: number;
+      color: string;
+      radius: number;
+      label: string;
+      id: string;
+    }
+
+    const points: GlobePoint[] = [];
+    const cityGroups: Record<string, GlobePoint[]> = {};
+
+    // User's own dates
+    for (const date of dates) {
+      if (date.longitude == null || date.latitude == null) continue;
+      const key = `${date.cityId}`;
+      if (!cityGroups[key]) cityGroups[key] = [];
+      cityGroups[key].push({
+        lat: date.latitude,
+        lng: date.longitude,
+        color: "#ff007f",
+        radius: 0.3,
+        label: `You — ${date.cityName || "Unknown"}`,
+        id: date.id,
+      });
+    }
+
+    // Friend dates
+    for (const fd of friendDates) {
+      const key = `${fd.cityId}`;
+      if (!cityGroups[key]) cityGroups[key] = [];
+      cityGroups[key].push({
+        lat: fd.latitude,
+        lng: fd.longitude,
+        color: fd.color,
+        radius: 0.3,
+        label: `${fd.friendNickname || "Friend"} — ${fd.cityName || "Unknown"}`,
+        id: fd.id,
+      });
+    }
+
+    // Apply spiral offset for same-city dates
+    for (const group of Object.values(cityGroups)) {
+      if (group.length === 1) {
+        points.push(group[0]!);
+      } else {
+        for (let i = 0; i < group.length; i++) {
+          const pt = group[i]!;
+          const angle = (i * 137.5 * Math.PI) / 180; // golden angle
+          const dist = 0.3 + i * 0.15; // increasing distance
+          const offsetLat = Math.cos(angle) * dist;
+          const offsetLng = Math.sin(angle) * dist;
+          points.push({
+            ...pt,
+            lat: pt.lat + offsetLat,
+            lng: pt.lng + offsetLng,
+          });
+        }
+      }
+    }
+
+    return points;
+  }, [dates, friendDates]);
 
   // Load GeoJSON
   useEffect(() => {
@@ -247,6 +315,13 @@ export function GlobeView() {
           }}
           onPolygonClick={handlePolygonClick}
           onGlobeClick={handleGlobeClick}
+          pointsData={allPoints}
+          pointLat={(d: object) => (d as { lat: number }).lat}
+          pointLng={(d: object) => (d as { lng: number }).lng}
+          pointColor={(d: object) => (d as { color: string }).color}
+          pointAltitude={0.03}
+          pointRadius={(d: object) => (d as { radius: number }).radius}
+          pointLabel={(d: object) => (d as { label: string }).label}
           animateIn={true}
         />
       )}

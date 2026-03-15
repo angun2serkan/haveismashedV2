@@ -1,9 +1,11 @@
-import { useState } from "react";
-import { Shield, Trash2, User, Pencil, Check, X } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Shield, Trash2, User, Pencil, Check, X, Award } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { BadgeGrid } from "@/components/Badges/BadgeGrid";
 import { useAuthStore } from "@/stores/authStore";
 import { api } from "@/services/api";
+import type { Badge } from "@/types";
 
 export function SettingsPage() {
   const user = useAuthStore((s) => s.user);
@@ -14,6 +16,16 @@ export function SettingsPage() {
   const [nicknameInput, setNicknameInput] = useState(user?.nickname ?? "");
   const [nicknameSaving, setNicknameSaving] = useState(false);
   const [nicknameError, setNicknameError] = useState<string | null>(null);
+  const [badges, setBadges] = useState<Badge[]>([]);
+  const [badgesLoading, setBadgesLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .getMyBadges()
+      .then(setBadges)
+      .catch(() => {})
+      .finally(() => setBadgesLoading(false));
+  }, []);
 
   const handleSaveNickname = async () => {
     const trimmed = nicknameInput.trim();
@@ -113,6 +125,21 @@ export function SettingsPage() {
               </span>
             </div>
           </div>
+        </Card>
+
+        {/* Badges */}
+        <Card>
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-white mb-3">
+            <Award size={16} className="text-neon-500" />
+            Rozetler
+          </h3>
+          {badgesLoading ? (
+            <p className="text-sm text-dark-500 text-center py-4">
+              Yukleniyor...
+            </p>
+          ) : (
+            <BadgeGrid badges={badges} showLocked={true} />
+          )}
         </Card>
 
         {/* Privacy */}

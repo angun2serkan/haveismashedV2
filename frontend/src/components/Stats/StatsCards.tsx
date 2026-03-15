@@ -1,6 +1,10 @@
-import { Globe, MapPin, Flag, Star } from "lucide-react";
+import { Globe, MapPin, Flag, Star, Smile, Dumbbell, MessageCircle } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { useLogStore } from "@/stores/logStore";
+
+function fmtAvg(val: number | null): string {
+  return val !== null ? `${val.toFixed(1)}/10` : "--";
+}
 
 export function StatsCards() {
   const stats = useLogStore((s) => s.stats);
@@ -25,11 +29,26 @@ export function StatsCards() {
       color: "text-accent-purple",
     },
     {
-      label: "Avg Rating",
-      value:
-        stats.averageRating !== null
-          ? `${stats.averageRating.toFixed(1)}/10`
-          : "--",
+      label: "Avg Face",
+      value: fmtAvg(stats.averageFaceRating),
+      icon: Smile,
+      color: "text-pink-400",
+    },
+    {
+      label: "Avg Body",
+      value: fmtAvg(stats.averageBodyRating),
+      icon: Dumbbell,
+      color: "text-orange-400",
+    },
+    {
+      label: "Avg Chat",
+      value: fmtAvg(stats.averageChatRating),
+      icon: MessageCircle,
+      color: "text-accent-cyan",
+    },
+    {
+      label: "Avg Overall",
+      value: fmtAvg(stats.averageRating),
       icon: Star,
       color: "text-yellow-400",
     },

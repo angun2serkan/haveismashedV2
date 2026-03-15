@@ -26,9 +26,9 @@ export function RegisterPage() {
     setError("");
 
     try {
-      const inviteId = searchParams.get("invite_id");
+      const inviteToken = searchParams.get("invite_token");
       const body: Record<string, string> = {};
-      if (inviteId) body.invite_id = inviteId;
+      if (inviteToken) body.invite_token = inviteToken;
 
       const res = await fetch(`${API_BASE}/api/auth/register`, {
         method: "POST",

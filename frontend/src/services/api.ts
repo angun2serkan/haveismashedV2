@@ -1,10 +1,13 @@
 import { useAuthStore } from "@/stores/authStore";
 import type {
   ApiResponse,
+  Badge,
   City,
   Connection,
   DateEntry,
+  FriendDate,
   InviteResponse,
+  Notification,
   Stats,
 } from "@/types";
 
@@ -19,10 +22,16 @@ function mapDate(d: any): DateEntry {
     cityName: d.city_name ?? "",
     gender: d.gender,
     ageRange: d.age_range,
+    personNickname: d.person_nickname ?? null,
     description: d.description ?? null,
     rating: d.rating,
+    faceRating: d.face_rating ?? null,
+    bodyRating: d.body_rating ?? null,
+    chatRating: d.chat_rating ?? null,
     dateAt: d.date_at,
     tagIds: d.tag_ids ?? [],
+    longitude: d.longitude ?? null,
+    latitude: d.latitude ?? null,
     createdAt: d.created_at,
     updatedAt: d.updated_at,
   };
@@ -34,6 +43,9 @@ function mapStats(s: any): Stats {
     uniqueCountries: s.unique_countries,
     uniqueCities: s.unique_cities,
     averageRating: s.average_rating ?? null,
+    averageFaceRating: s.average_face_rating ?? null,
+    averageBodyRating: s.average_body_rating ?? null,
+    averageChatRating: s.average_chat_rating ?? null,
   };
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -74,12 +86,12 @@ async function request<T>(
 
 export const api = {
   // Auth
-  register: (inviteId?: string) =>
+  register: (inviteToken?: string) =>
     request<{ user_id: string; secret_phrase: string; token: string; expires_in: number }>(
       "/auth/register",
       {
         method: "POST",
-        body: JSON.stringify(inviteId ? { invite_id: inviteId } : {}),
+        body: JSON.stringify(inviteToken ? { invite_token: inviteToken } : {}),
       },
     ),
 
@@ -112,17 +124,38 @@ export const api = {
     city_id: number;
     gender: "male" | "female" | "other";
     age_range: string;
+    person_nickname?: string;
     description?: string;
     rating: number;
+    face_rating?: number;
+    body_rating?: number;
+    chat_rating?: number;
     date_at: string;
     tag_ids: number[];
-  }): Promise<DateEntry> => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await request<any>("/dates", {
+  }): Promise<{ date: DateEntry; newBadges: string[] }> => {
+    const token = useAuthStore.getState().token;
+    const response = await fetch(`${API_BASE}/dates`, {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(data),
     });
-    return mapDate(raw);
+
+    if (response.status === 401) {
+      useAuthStore.getState().logout();
+      throw new Error("Session expired");
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await response.json();
+    if (!json.success) throw new Error(json.error ?? "Unknown error");
+
+    return {
+      date: mapDate(json.data),
+      newBadges: json.new_badges ?? [],
+    };
   },
 
   getDates: async (cursor?: string, limit?: number): Promise<{ dates: DateEntry[]; next_cursor?: string }> => {
@@ -180,10 +213,21 @@ export const api = {
   },
 
   // Connections
-  getConnections: (status?: string) =>
-    request<Connection[]>(
+  getConnections: async (status?: string): Promise<Connection[]> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any[]>(
       `/connections${status ? `?status=${status}` : ""}`,
-    ),
+    );
+    return raw.map((c) => ({
+      id: c.id,
+      requesterId: c.requester_id,
+      responderId: c.responder_id,
+      friendNickname: c.friend_nickname ?? null,
+      color: c.color ?? "#FF5733",
+      status: c.status,
+      createdAt: c.created_at,
+    }));
+  },
 
   respondToConnection: (action: "accept" | "reject") =>
     request<{ status: string }>("/connections/respond", {
@@ -191,12 +235,58 @@ export const api = {
       body: JSON.stringify({ action }),
     }),
 
+  deleteConnection: (id: string) =>
+    request<{ id: string; message: string }>(`/connections/${id}`, {
+      method: "DELETE",
+    }),
+
+  setFriendColor: (connectionId: string, color: string) =>
+    request<{ color: string }>(`/connections/${connectionId}/color`, {
+      method: "PUT",
+      body: JSON.stringify({ color }),
+    }),
+
+  getFriendDates: async (): Promise<FriendDate[]> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any[]>("/friends/dates");
+    return raw.map((d) => ({
+      id: d.id,
+      countryCode: d.country_code,
+      cityName: d.city_name ?? null,
+      color: d.color,
+      cityId: d.city_id,
+      friendNickname: d.friend_nickname ?? null,
+      longitude: d.longitude,
+      latitude: d.latitude,
+      dateAt: d.date_at,
+    }));
+  },
+
   // Invites
-  createInvite: (inviteType: "platform" | "friend") =>
-    request<InviteResponse>("/invites/create", {
+  getInvite: (id: string) =>
+    request<{ invite_id: string; invite_type: "platform" | "friend"; inviter_id: string; valid: boolean }>(
+      `/invites/${id}`,
+    ),
+
+  addFriendByCode: (code: string) =>
+    request<{ connection_id: string; status: string }>("/connections/add", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+
+  createInvite: async (inviteType: "platform" | "friend"): Promise<InviteResponse> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any>("/invites/create", {
       method: "POST",
       body: JSON.stringify({ invite_type: inviteType }),
-    }),
+    });
+    return {
+      token: raw.token,
+      inviteType: raw.invite_type,
+      link: raw.link,
+      expiresInSecs: raw.expires_in_secs,
+    };
+  },
 
   // Tags
   getTags: (category?: string) =>
@@ -204,7 +294,66 @@ export const api = {
       `/tags${category ? `?category=${category}` : ""}`,
     ),
 
+  createTag: (name: string, category: string) =>
+    request<{ id: number; name: string; category: string; is_predefined: boolean }>(
+      "/tags",
+      { method: "POST", body: JSON.stringify({ name, category }) },
+    ),
+
   // Feed
   getFeed: () =>
     request<{ message: string; friends_active_this_week: number }>("/feed"),
+
+  // Badges
+  getMyBadges: async (): Promise<Badge[]> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any[]>("/badges/me");
+    return raw.map((b) => ({
+      id: b.id,
+      name: b.name,
+      description: b.description,
+      icon: b.icon,
+      category: b.category,
+      threshold: b.threshold,
+      earned: b.earned,
+      earnedAt: b.earned_at ?? null,
+    }));
+  },
+
+  getFriendBadges: async (friendId: string): Promise<Badge[]> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any[]>(`/badges/friend/${friendId}`);
+    return raw.map((b) => ({
+      id: b.id,
+      name: b.name,
+      description: b.description,
+      icon: b.icon,
+      category: b.category,
+      threshold: b.threshold,
+      earned: b.earned ?? true,
+      earnedAt: b.earned_at ?? null,
+    }));
+  },
+
+  // Notifications
+  getNotifications: async (): Promise<Notification[]> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any[]>("/notifications");
+    return raw.map((n) => ({
+      id: n.id,
+      title: n.title,
+      message: n.message,
+      isRead: n.is_read,
+      createdAt: n.created_at,
+    }));
+  },
+
+  markNotificationRead: (id: string) =>
+    request<void>(`/notifications/${id}/read`, { method: "PUT" }),
+
+  getUnreadCount: async (): Promise<number> => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await request<any>("/notifications/unread-count");
+    return raw.count ?? 0;
+  },
 };

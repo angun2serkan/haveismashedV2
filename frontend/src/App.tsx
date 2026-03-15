@@ -8,6 +8,8 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { FriendsPage } from "@/pages/FriendsPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { NicknamePage } from "@/pages/NicknamePage";
+import { InvitePage } from "@/pages/InvitePage";
+import { NotificationsPage } from "@/pages/NotificationsPage";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -29,7 +31,15 @@ function NicknameRoute({ children }: { children: React.ReactNode }) {
 
 function GuestRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (isAuthenticated) return <Navigate to="/" replace />;
+  if (isAuthenticated) {
+    // If there's a friend_code param, redirect to friends page to handle it
+    const searchParams = new URLSearchParams(window.location.search);
+    const friendCode = searchParams.get("friend_code");
+    if (friendCode) {
+      return <Navigate to={`/friends?auto_add=${friendCode}`} replace />;
+    }
+    return <Navigate to="/" replace />;
+  }
   return <>{children}</>;
 }
 
@@ -101,6 +111,15 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/notifications"
+          element={
+            <ProtectedRoute>
+              <NotificationsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="/invite/:id" element={<InvitePage />} />
       </Routes>
     </Layout>
   );

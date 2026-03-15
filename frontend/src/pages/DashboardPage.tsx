@@ -3,7 +3,7 @@ import { StatsCards } from "@/components/Stats/StatsCards";
 import { Card } from "@/components/ui/Card";
 import { useLogStore } from "@/stores/logStore";
 import { api } from "@/services/api";
-import { MapPin, Star, Calendar, Loader2 } from "lucide-react";
+import { MapPin, Star, Calendar, Loader2, Smile, Dumbbell, MessageCircle } from "lucide-react";
 import { loadTags, getTagById } from "@/data/tags";
 import { getCountryName } from "@/utils/countryName";
 
@@ -80,7 +80,7 @@ export function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-sm font-medium text-white">
-                        {date.cityName}, {getCountryName(date.countryCode)}
+                        {date.personNickname ? `${date.personNickname} — ` : ""}{date.cityName}, {getCountryName(date.countryCode)}
                       </p>
                       <div className="flex items-center gap-1 shrink-0">
                         <Star size={14} className="text-neon-500" />
@@ -96,6 +96,27 @@ export function DashboardPage() {
                       <span className="flex items-center gap-1">
                         <Calendar size={10} />
                         {date.dateAt}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      {date.faceRating !== null && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-pink-500/15 text-pink-400 border border-pink-500/30">
+                          <Smile size={10} /> Face: {date.faceRating}
+                        </span>
+                      )}
+                      {date.bodyRating !== null && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400 border border-orange-500/30">
+                          <Dumbbell size={10} /> Body: {date.bodyRating}
+                        </span>
+                      )}
+                      {date.chatRating !== null && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30">
+                          <MessageCircle size={10} /> Chat: {date.chatRating}
+                        </span>
+                      )}
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-yellow-500/15 text-yellow-400 border border-yellow-500/30">
+                        <Star size={10} /> Overall: {date.rating}
                       </span>
                     </div>
 

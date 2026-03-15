@@ -42,3 +42,10 @@ export function getTagById(id: number): TagDefinition | undefined {
 export function getAllTagsById(): Record<number, TagDefinition> {
   return tagsById;
 }
+
+export function addTagToCache(tag: TagDefinition): void {
+  tagsCache.push(tag);
+  if (!tagsByCategory[tag.category]) tagsByCategory[tag.category] = [];
+  tagsByCategory[tag.category]!.push(tag);
+  tagsById[tag.id] = tag;
+}

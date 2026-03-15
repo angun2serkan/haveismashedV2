@@ -2,14 +2,21 @@ import { GlobeView } from "@/components/Globe/GlobeView";
 import { DateEntryForm } from "@/components/DateEntry/DateEntryForm";
 import { StatsCards } from "@/components/Stats/StatsCards";
 import { useLogStore } from "@/stores/logStore";
-import { useState, useRef } from "react";
-import { ChevronUp, Star, Calendar } from "lucide-react";
+import { useFriendStore } from "@/stores/friendStore";
+import { api } from "@/services/api";
+import { useState, useRef, useEffect } from "react";
+import { ChevronUp, Star, Calendar, Smile, Dumbbell, MessageCircle } from "lucide-react";
 import { getCountryName } from "@/utils/countryName";
 
 export function HomePage() {
   const dates = useLogStore((s) => s.dates);
+  const setFriendDates = useFriendStore((s) => s.setFriendDates);
   const [panelOpen, setPanelOpen] = useState(false);
   const touchStartY = useRef(0);
+
+  useEffect(() => {
+    api.getFriendDates().then(setFriendDates).catch(() => {});
+  }, [setFriendDates]);
 
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0]!.clientY;
@@ -64,7 +71,7 @@ export function HomePage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-white font-medium">
-                      {date.cityName ? `${date.cityName}, ` : ""}{getCountryName(date.countryCode)}
+                      {date.personNickname ? `${date.personNickname} — ` : ""}{date.cityName ? `${date.cityName}, ` : ""}{getCountryName(date.countryCode)}
                     </span>
                     <span className="text-xs text-dark-500 flex items-center gap-1">
                       <Calendar size={10} />
@@ -75,10 +82,26 @@ export function HomePage() {
                     <span className="text-xs text-dark-400 capitalize">
                       {date.gender} / {date.ageRange}
                     </span>
-                    <span className="text-xs text-neon-500 flex items-center gap-1">
-                      <Star size={10} />
-                      {date.rating}/10
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {date.faceRating !== null && (
+                        <span className="text-[10px] text-pink-400 flex items-center gap-0.5">
+                          <Smile size={9} />{date.faceRating}
+                        </span>
+                      )}
+                      {date.bodyRating !== null && (
+                        <span className="text-[10px] text-orange-400 flex items-center gap-0.5">
+                          <Dumbbell size={9} />{date.bodyRating}
+                        </span>
+                      )}
+                      {date.chatRating !== null && (
+                        <span className="text-[10px] text-accent-cyan flex items-center gap-0.5">
+                          <MessageCircle size={9} />{date.chatRating}
+                        </span>
+                      )}
+                      <span className="text-xs text-neon-500 flex items-center gap-0.5">
+                        <Star size={10} />{date.rating}
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))
