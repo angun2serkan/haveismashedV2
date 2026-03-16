@@ -9,7 +9,7 @@ pub struct City {
     pub population: Option<i32>,
 }
 
-/// City with coordinates extracted from PostGIS geometry.
+/// City with coordinates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CityWithCoords {
     pub id: i32,

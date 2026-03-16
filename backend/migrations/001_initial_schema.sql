@@ -1,10 +1,9 @@
 -- ============================================================
 -- haveismashedV2 — Initial Database Schema
--- PostgreSQL 16 + PostGIS
+-- PostgreSQL 16
 -- ============================================================
 
 -- Extensions
-CREATE EXTENSION IF NOT EXISTS "postgis";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ============================================================
@@ -35,14 +34,15 @@ CREATE TABLE cities (
     id              SERIAL PRIMARY KEY,
     name            VARCHAR(255) NOT NULL,
     country_code    CHAR(2) NOT NULL,                       -- ISO 3166-1 alpha-2
-    location        GEOMETRY(Point, 4326) NOT NULL,
+    longitude       FLOAT8 NOT NULL,
+    latitude        FLOAT8 NOT NULL,
     population      INTEGER,
 
     UNIQUE(name, country_code)
 );
 
 CREATE INDEX idx_cities_country ON cities(country_code);
-CREATE INDEX idx_cities_location ON cities USING GIST(location);
+CREATE INDEX idx_cities_coords ON cities(latitude, longitude);
 CREATE INDEX idx_cities_name ON cities(name);
 
 -- ============================================================

@@ -166,7 +166,7 @@ async fn list_cities(
     let rows = if let Some(ref country_code) = params.country_code {
         sqlx::query(
             r#"
-            SELECT id, name, country_code, ST_X(location) as lng, ST_Y(location) as lat, population
+            SELECT id, name, country_code, longitude, latitude, population
             FROM cities
             WHERE country_code = $1
             ORDER BY country_code, population DESC NULLS LAST, name
@@ -178,7 +178,7 @@ async fn list_cities(
     } else {
         sqlx::query(
             r#"
-            SELECT id, name, country_code, ST_X(location) as lng, ST_Y(location) as lat, population
+            SELECT id, name, country_code, longitude, latitude, population
             FROM cities
             ORDER BY country_code, population DESC NULLS LAST, name
             "#,
@@ -194,8 +194,8 @@ async fn list_cities(
                 "id": r.get::<i32, _>("id"),
                 "name": r.get::<String, _>("name"),
                 "country_code": r.get::<String, _>("country_code"),
-                "longitude": r.get::<f64, _>("lng"),
-                "latitude": r.get::<f64, _>("lat"),
+                "longitude": r.get::<f64, _>("longitude"),
+                "latitude": r.get::<f64, _>("latitude"),
                 "population": r.get::<Option<i32>, _>("population"),
             })
         })
@@ -213,7 +213,7 @@ async fn create_city(
     verify_admin(&headers, &state.config)?;
 
     let id = sqlx::query_scalar::<_, i32>(
-        "INSERT INTO cities (name, country_code, location, population) VALUES ($1, $2, ST_SetSRID(ST_MakePoint($3, $4), 4326), $5) RETURNING id",
+        "INSERT INTO cities (name, country_code, longitude, latitude, population) VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(&body.name)
     .bind(&body.country_code)
@@ -273,7 +273,7 @@ async fn update_city(
     }
 
     if let (Some(lat), Some(lng)) = (body.latitude, body.longitude) {
-        sqlx::query("UPDATE cities SET location = ST_SetSRID(ST_MakePoint($1, $2), 4326) WHERE id = $3")
+        sqlx::query("UPDATE cities SET longitude = $1, latitude = $2 WHERE id = $3")
             .bind(lng)
             .bind(lat)
             .bind(id)

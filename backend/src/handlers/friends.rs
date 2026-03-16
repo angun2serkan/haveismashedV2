@@ -32,8 +32,8 @@ async fn get_friend_dates(
             conn.color,
             d.city_id,
             u.nickname,
-            ST_X(ci.location) as lng,
-            ST_Y(ci.location) as lat,
+            ci.longitude,
+            ci.latitude,
             d.date_at
         FROM dates d
         JOIN users u ON u.id = d.user_id

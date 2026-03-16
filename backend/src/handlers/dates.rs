@@ -211,7 +211,7 @@ async fn create_date(
 
     // Verify city exists and get name + coordinates
     let city_row = sqlx::query_as::<_, (String, f64, f64)>(
-        "SELECT name, ST_X(location), ST_Y(location) FROM cities WHERE id = $1 AND country_code = $2",
+        "SELECT name, longitude, latitude FROM cities WHERE id = $1 AND country_code = $2",
     )
     .bind(body.city_id)
     .bind(&body.country_code)
@@ -325,7 +325,7 @@ async fn list_dates(
     let rows = if let Some(cursor) = params.cursor {
         sqlx::query(
             r#"
-            SELECT d.id, d.country_code, d.city_id, c.name, ST_X(c.location), ST_Y(c.location), d.gender, d.age_range, d.height_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
+            SELECT d.id, d.country_code, d.city_id, c.name, c.longitude, c.latitude, d.gender, d.age_range, d.height_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
             FROM dates d
             JOIN cities c ON c.id = d.city_id
             WHERE d.user_id = $1 AND d.deleted_at IS NULL AND d.id < $2
@@ -341,7 +341,7 @@ async fn list_dates(
     } else {
         sqlx::query(
             r#"
-            SELECT d.id, d.country_code, d.city_id, c.name, ST_X(c.location), ST_Y(c.location), d.gender, d.age_range, d.height_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
+            SELECT d.id, d.country_code, d.city_id, c.name, c.longitude, c.latitude, d.gender, d.age_range, d.height_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
             FROM dates d
             JOIN cities c ON c.id = d.city_id
             WHERE d.user_id = $1 AND d.deleted_at IS NULL
@@ -407,7 +407,7 @@ async fn get_date(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let row = sqlx::query(
         r#"
-        SELECT d.id, d.country_code, d.city_id, c.name, ST_X(c.location), ST_Y(c.location), d.gender, d.age_range, d.height_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
+        SELECT d.id, d.country_code, d.city_id, c.name, c.longitude, c.latitude, d.gender, d.age_range, d.height_range, d.description, d.person_nickname, d.rating, d.face_rating, d.body_rating, d.chat_rating, d.date_at, d.created_at, d.updated_at
         FROM dates d
         JOIN cities c ON c.id = d.city_id
         WHERE d.id = $1 AND d.user_id = $2 AND d.deleted_at IS NULL

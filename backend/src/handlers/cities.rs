@@ -33,7 +33,7 @@ async fn list_cities(
     let cities = if let Some(ref cc) = params.country_code {
         sqlx::query_as::<_, (i32, String, String, f64, f64, Option<i32>)>(
             r#"
-            SELECT id, name, country_code, ST_X(location) as lng, ST_Y(location) as lat, population
+            SELECT id, name, country_code, longitude, latitude, population
             FROM cities
             WHERE country_code = $1
             ORDER BY population DESC NULLS LAST, name
@@ -45,7 +45,7 @@ async fn list_cities(
     } else {
         sqlx::query_as::<_, (i32, String, String, f64, f64, Option<i32>)>(
             r#"
-            SELECT id, name, country_code, ST_X(location) as lng, ST_Y(location) as lat, population
+            SELECT id, name, country_code, longitude, latitude, population
             FROM cities
             ORDER BY country_code, population DESC NULLS LAST, name
             "#,
