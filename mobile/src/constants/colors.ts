@@ -22,3 +22,19 @@ export const colors = {
 } as const;
 
 export type Colors = typeof colors;
+
+export const neonShadow = (color: string) => ({
+  shadowColor: color,
+  shadowOffset: { width: 0, height: 0 },
+  shadowOpacity: 0.6,
+  shadowRadius: 8,
+  elevation: 8,
+});
+
+export const neonGlow = (color: string, intensity: number = 0.6) => ({
+  shadowColor: color,
+  shadowOffset: { width: 0, height: 0 },
+  shadowOpacity: intensity,
+  shadowRadius: 12,
+  elevation: 10,
+});

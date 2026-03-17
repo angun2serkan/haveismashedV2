@@ -4,8 +4,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
 import type { User } from "../types";
 
-const SECURE_TOKEN_KEY = "havesmashed-auth-token";
-
 interface AuthState {
   user: User | null;
   token: string | null;
@@ -22,18 +20,18 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       isAuthenticated: false,
       setAuth: (user, token) => {
-        SecureStore.setItemAsync(SECURE_TOKEN_KEY, token).catch(() => {});
+        SecureStore.setItemAsync("auth_token", token);
         set({ user, token, isAuthenticated: true });
       },
       setNickname: (nickname, newToken) => {
-        SecureStore.setItemAsync(SECURE_TOKEN_KEY, newToken).catch(() => {});
+        SecureStore.setItemAsync("auth_token", newToken);
         set((state) => ({
           user: state.user ? { ...state.user, nickname } : null,
           token: newToken,
         }));
       },
       logout: () => {
-        SecureStore.deleteItemAsync(SECURE_TOKEN_KEY).catch(() => {});
+        SecureStore.deleteItemAsync("auth_token");
         set({
           user: null,
           token: null,

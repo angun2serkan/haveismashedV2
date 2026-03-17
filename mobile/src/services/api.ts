@@ -1,5 +1,5 @@
-import { useAuthStore } from "../stores/authStore";
-import { API_URL } from "../constants/config";
+import { API_URL } from '../constants/config';
+import { useAuthStore } from '../stores/authStore';
 import type {
   ApiResponse,
   Badge,
@@ -14,7 +14,7 @@ import type {
   InviteResponse,
   Notification,
   Stats,
-} from "../types";
+} from '../types';
 
 const API_BASE = API_URL;
 
@@ -59,7 +59,7 @@ function mapStats(s: any): Stats {
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 async function request<T>(
-  path: string,
+  endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
   const token = useAuthStore.getState().token;
@@ -73,7 +73,7 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}/api${path}`, {
+  const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
     headers,
   });
@@ -143,7 +143,7 @@ export const api = {
     tag_ids: number[];
   }): Promise<{ date: DateEntry; newBadges: string[] }> => {
     const token = useAuthStore.getState().token;
-    const response = await fetch(`${API_BASE}/api/dates`, {
+    const response = await fetch(`${API_BASE}/dates`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
