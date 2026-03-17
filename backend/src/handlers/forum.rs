@@ -53,6 +53,14 @@ pub struct ToggleLikeRequest {
     pub target_id: Uuid,
 }
 
+#[derive(Deserialize)]
+struct ReportRequest {
+    target_type: String,  // "topic" or "comment"
+    target_id: Uuid,
+    reason: String,       // "spam", "harassment", "inappropriate", "misinformation", "other"
+    description: Option<String>,
+}
+
 // ── Router ─────────────────────────────────────────────────────
 
 pub fn router() -> Router<AppState> {
@@ -62,6 +70,8 @@ pub fn router() -> Router<AppState> {
         .route("/topics/{id}/comments", post(create_comment))
         .route("/comments/{id}", put(update_comment).delete(delete_comment))
         .route("/like", post(toggle_like))
+        .route("/report", post(report_content))
+        .route("/ban-status", get(get_ban_status))
 }
 
 // ── Handlers ───────────────────────────────────────────────────
@@ -196,6 +206,22 @@ async fn create_topic(
     Json(body): Json<CreateTopicRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     auth.require_nickname()?;
+
+    // Check forum ban
+    let banned_until: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT forum_banned_until FROM users WHERE id = $1"
+    ).bind(auth.user_id).fetch_one(&state.db).await?;
+
+    if let Some(until) = banned_until {
+        if until > chrono::Utc::now() {
+            let remaining = until - chrono::Utc::now();
+            let hours = remaining.num_hours();
+            let mins = remaining.num_minutes() % 60;
+            return Err(AppError::Forbidden(format!(
+                "Forum erişiminiz engellendi. Kalan süre: {}s {}dk", hours, mins
+            )));
+        }
+    }
 
     // Validate title
     if body.title.is_empty() || body.title.len() > 200 {
@@ -378,6 +404,22 @@ async fn create_comment(
     Json(body): Json<CreateCommentRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     auth.require_nickname()?;
+
+    // Check forum ban
+    let banned_until: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT forum_banned_until FROM users WHERE id = $1"
+    ).bind(auth.user_id).fetch_one(&state.db).await?;
+
+    if let Some(until) = banned_until {
+        if until > chrono::Utc::now() {
+            let remaining = until - chrono::Utc::now();
+            let hours = remaining.num_hours();
+            let mins = remaining.num_minutes() % 60;
+            return Err(AppError::Forbidden(format!(
+                "Forum erişiminiz engellendi. Kalan süre: {}s {}dk", hours, mins
+            )));
+        }
+    }
 
     // Validate body
     if body.body.is_empty() || body.body.len() > 5000 {
@@ -728,6 +770,67 @@ async fn toggle_like(
         "data": {
             "liked": liked,
             "like_count": like_count,
+        },
+        "error": null
+    })))
+}
+
+/// POST /api/forum/report
+async fn report_content(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(body): Json<ReportRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    auth.require_nickname()?;
+
+    // Validate target_type
+    if !["topic", "comment"].contains(&body.target_type.as_str()) {
+        return Err(AppError::BadRequest("target_type must be 'topic' or 'comment'".into()));
+    }
+    // Validate reason
+    if !["spam", "harassment", "inappropriate", "misinformation", "other"].contains(&body.reason.as_str()) {
+        return Err(AppError::BadRequest("Invalid reason".into()));
+    }
+
+    // Insert report (UNIQUE constraint prevents duplicates)
+    sqlx::query(
+        "INSERT INTO forum_reports (reporter_id, target_type, target_id, reason, description) VALUES ($1, $2, $3, $4, $5)"
+    )
+    .bind(auth.user_id)
+    .bind(&body.target_type)
+    .bind(body.target_id)
+    .bind(&body.reason)
+    .bind(&body.description)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        if let sqlx::Error::Database(ref db_err) = e {
+            if db_err.constraint() == Some("forum_reports_reporter_id_target_type_target_id_key") {
+                return AppError::Conflict("You have already reported this content".into());
+            }
+        }
+        AppError::Sqlx(e)
+    })?;
+
+    Ok(Json(json!({ "success": true, "data": { "message": "Report submitted" }, "error": null })))
+}
+
+/// GET /api/forum/ban-status
+async fn get_ban_status(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let banned_until: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT forum_banned_until FROM users WHERE id = $1"
+    ).bind(auth.user_id).fetch_one(&state.db).await?;
+
+    let is_banned = banned_until.map_or(false, |until| until > chrono::Utc::now());
+
+    Ok(Json(json!({
+        "success": true,
+        "data": {
+            "is_banned": is_banned,
+            "banned_until": banned_until,
         },
         "error": null
     })))

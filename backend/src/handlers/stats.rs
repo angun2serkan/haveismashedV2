@@ -2,6 +2,7 @@ use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
+use sqlx::Row;
 
 use crate::error::AppError;
 use crate::middleware::auth::AuthUser;
@@ -16,6 +17,8 @@ pub struct StatsResponse {
     pub average_face_rating: Option<f64>,
     pub average_body_rating: Option<f64>,
     pub average_chat_rating: Option<f64>,
+    pub current_streak: i32,
+    pub longest_streak: i32,
 }
 
 pub fn router() -> Router<AppState> {
@@ -45,6 +48,21 @@ async fn get_stats(
     .fetch_one(&state.db)
     .await?;
 
+    let streak = sqlx::query(
+        "SELECT current_streak, longest_streak FROM user_streaks WHERE user_id = $1",
+    )
+    .bind(auth.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (current_streak, longest_streak) = match streak {
+        Some(s) => (
+            s.get::<i32, _>("current_streak"),
+            s.get::<i32, _>("longest_streak"),
+        ),
+        None => (0, 0),
+    };
+
     let resp = StatsResponse {
         total_dates: row.0,
         unique_countries: row.1,
@@ -53,6 +71,8 @@ async fn get_stats(
         average_face_rating: row.4,
         average_body_rating: row.5,
         average_chat_rating: row.6,
+        current_streak,
+        longest_streak,
     };
 
     Ok(Json(serde_json::json!({

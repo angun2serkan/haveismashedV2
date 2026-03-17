@@ -70,6 +70,12 @@ async fn get_friend_dates(
             WHERE conn.status = 'accepted'
               AND d.deleted_at IS NULL
               AND d.user_id  = $2
+              AND NOT EXISTS (
+                  SELECT 1 FROM privacy_settings ps
+                  WHERE ps.user_id = d.user_id
+                  AND ps.connection_id IS NULL
+                  AND ps.share_dates = FALSE
+              )
             ORDER BY d.date_at DESC
             "#,
         )
@@ -111,6 +117,12 @@ async fn get_friend_dates(
             WHERE conn.status = 'accepted'
               AND d.deleted_at IS NULL
               AND d.user_id != $1
+              AND NOT EXISTS (
+                  SELECT 1 FROM privacy_settings ps
+                  WHERE ps.user_id = d.user_id
+                  AND ps.connection_id IS NULL
+                  AND ps.share_dates = FALSE
+              )
             ORDER BY d.date_at DESC
             "#,
         )
@@ -181,6 +193,18 @@ async fn get_friend_stats(
 
     if !is_friend {
         return Err(AppError::Forbidden("Not friends".to_string()));
+    }
+
+    // Check if friend has disabled stats sharing
+    let stats_hidden = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM privacy_settings WHERE user_id = $1 AND connection_id IS NULL AND share_stats = FALSE)",
+    )
+    .bind(friend_id)
+    .fetch_one(db)
+    .await?;
+
+    if stats_hidden {
+        return Err(AppError::Forbidden("This user has disabled stats sharing".to_string()));
     }
 
     // Single query for all stats

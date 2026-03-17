@@ -193,6 +193,68 @@ async fn replace_tags(db: &sqlx::PgPool, date_id: Uuid, tag_ids: &[i32]) -> Resu
     Ok(())
 }
 
+async fn update_streak(db: &sqlx::PgPool, user_id: Uuid) -> Result<(), AppError> {
+    use chrono::{Datelike, Utc};
+
+    let now = Utc::now();
+    let current_week = now.iso_week().year() * 100 + now.iso_week().week() as i32;
+
+    let row = sqlx::query(
+        "SELECT current_streak, longest_streak, last_log_week FROM user_streaks WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+
+    match row {
+        None => {
+            sqlx::query(
+                "INSERT INTO user_streaks (user_id, current_streak, longest_streak, last_log_week) VALUES ($1, 1, 1, $2)",
+            )
+            .bind(user_id)
+            .bind(current_week)
+            .execute(db)
+            .await?;
+        }
+        Some(row) => {
+            let current_streak: i32 = row.get("current_streak");
+            let longest_streak: i32 = row.get("longest_streak");
+            let last_log_week: Option<i32> = row.get("last_log_week");
+
+            let (new_streak, new_longest) = match last_log_week {
+                Some(last_week) if last_week == current_week => {
+                    // Already logged this week — no change
+                    (current_streak, longest_streak)
+                }
+                Some(last_week)
+                    if last_week == current_week - 1
+                        || (current_week % 100 == 1 && last_week % 100 >= 51) =>
+                {
+                    // Consecutive week — increment streak
+                    let new_s = current_streak + 1;
+                    (new_s, new_s.max(longest_streak))
+                }
+                _ => {
+                    // Streak broken — reset to 1
+                    (1, longest_streak)
+                }
+            };
+
+            sqlx::query(
+                "UPDATE user_streaks SET current_streak = $1, longest_streak = $2, last_log_week = $3, updated_at = NOW() WHERE user_id = $4",
+            )
+            .bind(new_streak)
+            .bind(new_longest)
+            .bind(current_week)
+            .bind(user_id)
+            .execute(db)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
 // ── Handlers ────────────────────────────────────────────────────
 
 /// POST /api/dates
@@ -274,6 +336,9 @@ async fn create_date(
 
     // Check for new badges
     let new_badges = crate::handlers::badges::check_and_award_badges(&state.db, auth.user_id).await?;
+
+    // Update streak
+    update_streak(&state.db, auth.user_id).await?;
 
     // Notify friends about new date
     let city_name_clone = city_name.clone();

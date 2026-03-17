@@ -77,4 +77,14 @@ export const adminApi = {
   toggleForumPin: (id: string) => request<any>(`/admin/forum/topics/${id}/pin`, { method: 'PUT' }),
   toggleForumLock: (id: string) => request<any>(`/admin/forum/topics/${id}/lock`, { method: 'PUT' }),
   deleteForumComment: (id: string) => request<null>(`/admin/forum/comments/${id}`, { method: 'DELETE' }),
+
+  // Forum Reports & Bans
+  getForumReports: () => request<any[]>('/admin/forum/reports'),
+  reviewReport: (id: string, status: string) =>
+    request<any>(`/admin/forum/reports/${id}/review`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  banForumUser: (userId: string, data: { duration_hours: number; reason?: string }) =>
+    request<any>(`/admin/forum/users/${userId}/ban`, { method: 'POST', body: JSON.stringify(data) }),
+  unbanForumUser: (userId: string) =>
+    request<any>(`/admin/forum/users/${userId}/unban`, { method: 'POST' }),
+  getActiveBans: () => request<any[]>('/admin/forum/bans'),
 }

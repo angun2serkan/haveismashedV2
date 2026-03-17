@@ -82,6 +82,17 @@ pub struct CreateNotificationRequest {
     pub notification_type: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct ReviewReportRequest {
+    pub status: String, // "reviewed" or "dismissed"
+}
+
+#[derive(Deserialize)]
+pub struct BanUserRequest {
+    pub duration_hours: i32, // 24, 72, 168 (7d), 720 (30d), 0 = permanent
+    pub reason: Option<String>,
+}
+
 // ── Router ─────────────────────────────────────────────────────
 
 pub fn router() -> Router<AppState> {
@@ -111,6 +122,12 @@ pub fn router() -> Router<AppState> {
         .route("/forum/topics/{id}/pin", put(toggle_pin))
         .route("/forum/topics/{id}/lock", put(toggle_lock))
         .route("/forum/comments/{id}", delete(delete_forum_comment_admin))
+        // Forum moderation
+        .route("/forum/reports", get(list_reports))
+        .route("/forum/reports/{id}/review", put(review_report))
+        .route("/forum/users/{id}/ban", post(ban_user))
+        .route("/forum/users/{id}/unban", post(unban_user))
+        .route("/forum/bans", get(list_active_bans))
 }
 
 // ── Dashboard ──────────────────────────────────────────────────
@@ -962,4 +979,225 @@ async fn delete_forum_comment_admin(
         "data": { "id": id, "message": "Comment hard deleted" },
         "error": null
     })))
+}
+
+// ── Forum moderation ──────────────────────────────────────────
+
+/// GET /api/admin/forum/reports
+async fn list_reports(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    verify_admin(&headers, &state.config)?;
+
+    use sqlx::Row;
+    let rows = sqlx::query(
+        r#"
+        SELECT r.id, r.reporter_id, u.nickname AS reporter_nickname,
+               r.target_type, r.target_id, r.reason, r.description,
+               r.status, r.reviewed_by, r.reviewed_at, r.created_at,
+               (SELECT COUNT(*) FROM forum_reports r2 WHERE r2.target_type = r.target_type AND r2.target_id = r.target_id) AS total_reports_on_target,
+               CASE
+                   WHEN r.target_type = 'topic' THEN (SELECT t.user_id FROM forum_topics t WHERE t.id = r.target_id)
+                   WHEN r.target_type = 'comment' THEN (SELECT c.user_id FROM forum_comments c WHERE c.id = r.target_id)
+               END AS reported_user_id,
+               CASE
+                   WHEN r.target_type = 'topic' THEN (SELECT u2.nickname FROM forum_topics t JOIN users u2 ON u2.id = t.user_id WHERE t.id = r.target_id)
+                   WHEN r.target_type = 'comment' THEN (SELECT u2.nickname FROM forum_comments c JOIN users u2 ON u2.id = c.user_id WHERE c.id = r.target_id)
+               END AS reported_user_nickname,
+               CASE
+                   WHEN r.target_type = 'topic' THEN (
+                       SELECT COUNT(*) FROM forum_reports r3
+                       JOIN forum_topics t2 ON t2.id = r3.target_id AND r3.target_type = 'topic'
+                       WHERE t2.user_id = (SELECT t3.user_id FROM forum_topics t3 WHERE t3.id = r.target_id)
+                   ) + (
+                       SELECT COUNT(*) FROM forum_reports r3
+                       JOIN forum_comments c2 ON c2.id = r3.target_id AND r3.target_type = 'comment'
+                       WHERE c2.user_id = (SELECT t3.user_id FROM forum_topics t3 WHERE t3.id = r.target_id)
+                   )
+                   WHEN r.target_type = 'comment' THEN (
+                       SELECT COUNT(*) FROM forum_reports r3
+                       JOIN forum_topics t2 ON t2.id = r3.target_id AND r3.target_type = 'topic'
+                       WHERE t2.user_id = (SELECT c3.user_id FROM forum_comments c3 WHERE c3.id = r.target_id)
+                   ) + (
+                       SELECT COUNT(*) FROM forum_reports r3
+                       JOIN forum_comments c2 ON c2.id = r3.target_id AND r3.target_type = 'comment'
+                       WHERE c2.user_id = (SELECT c3.user_id FROM forum_comments c3 WHERE c3.id = r.target_id)
+                   )
+               END AS reported_user_total_reports
+        FROM forum_reports r
+        JOIN users u ON u.id = r.reporter_id
+        ORDER BY r.status = 'pending' DESC, r.created_at DESC
+        LIMIT 100
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let reports: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.get::<Uuid, _>("id"),
+                "reporter_id": r.get::<Uuid, _>("reporter_id"),
+                "reporter_nickname": r.get::<Option<String>, _>("reporter_nickname"),
+                "target_type": r.get::<String, _>("target_type"),
+                "target_id": r.get::<Uuid, _>("target_id"),
+                "reason": r.get::<String, _>("reason"),
+                "description": r.get::<Option<String>, _>("description"),
+                "status": r.get::<String, _>("status"),
+                "reviewed_by": r.get::<Option<String>, _>("reviewed_by"),
+                "reviewed_at": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("reviewed_at"),
+                "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+                "total_reports_on_target": r.get::<i64, _>("total_reports_on_target"),
+                "reported_user_id": r.get::<Option<Uuid>, _>("reported_user_id"),
+                "reported_user_nickname": r.get::<Option<String>, _>("reported_user_nickname"),
+                "reported_user_total_reports": r.get::<Option<i64>, _>("reported_user_total_reports"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "success": true, "data": reports, "error": null })))
+}
+
+/// PUT /api/admin/forum/reports/:id/review
+async fn review_report(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReviewReportRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    verify_admin(&headers, &state.config)?;
+
+    if !["reviewed", "dismissed"].contains(&body.status.as_str()) {
+        return Err(AppError::BadRequest("Status must be 'reviewed' or 'dismissed'".into()));
+    }
+
+    let result = sqlx::query(
+        "UPDATE forum_reports SET status = $1, reviewed_at = NOW(), reviewed_by = 'admin' WHERE id = $2"
+    )
+    .bind(&body.status)
+    .bind(id)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("Report not found".to_string()));
+    }
+
+    Ok(Json(json!({
+        "success": true,
+        "data": { "id": id, "status": body.status, "message": "Report updated" },
+        "error": null
+    })))
+}
+
+/// POST /api/admin/forum/users/:id/ban
+async fn ban_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<Uuid>,
+    Json(body): Json<BanUserRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    verify_admin(&headers, &state.config)?;
+
+    let expires_at = if body.duration_hours == 0 {
+        // Permanent: set to year 2099
+        Some(chrono::DateTime::parse_from_rfc3339("2099-01-01T00:00:00Z").unwrap().with_timezone(&chrono::Utc))
+    } else {
+        Some(chrono::Utc::now() + chrono::Duration::hours(body.duration_hours as i64))
+    };
+
+    // Update user
+    let result = sqlx::query("UPDATE users SET forum_banned_until = $1 WHERE id = $2")
+        .bind(expires_at)
+        .bind(user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("User not found".to_string()));
+    }
+
+    // Record in ban history
+    sqlx::query(
+        "INSERT INTO forum_ban_history (user_id, banned_by, duration_hours, reason, expires_at) VALUES ($1, 'admin', $2, $3, $4)"
+    )
+    .bind(user_id)
+    .bind(body.duration_hours)
+    .bind(&body.reason)
+    .bind(expires_at)
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(json!({
+        "success": true,
+        "data": {
+            "user_id": user_id,
+            "banned_until": expires_at,
+            "duration_hours": body.duration_hours,
+            "message": "User banned from forum"
+        },
+        "error": null
+    })))
+}
+
+/// POST /api/admin/forum/users/:id/unban
+async fn unban_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    verify_admin(&headers, &state.config)?;
+
+    let result = sqlx::query("UPDATE users SET forum_banned_until = NULL WHERE id = $1")
+        .bind(user_id)
+        .execute(&state.db)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound("User not found".to_string()));
+    }
+
+    Ok(Json(json!({
+        "success": true,
+        "data": { "user_id": user_id, "message": "User unbanned from forum" },
+        "error": null
+    })))
+}
+
+/// GET /api/admin/forum/bans
+async fn list_active_bans(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, AppError> {
+    verify_admin(&headers, &state.config)?;
+
+    use sqlx::Row;
+    let rows = sqlx::query(
+        r#"
+        SELECT u.id, u.nickname, u.forum_banned_until,
+               (SELECT COUNT(*) FROM forum_reports r JOIN forum_topics t ON t.id = r.target_id AND r.target_type = 'topic' WHERE t.user_id = u.id) +
+               (SELECT COUNT(*) FROM forum_reports r JOIN forum_comments c ON c.id = r.target_id AND r.target_type = 'comment' WHERE c.user_id = u.id) AS total_reports
+        FROM users u
+        WHERE u.forum_banned_until IS NOT NULL AND u.forum_banned_until > NOW()
+        ORDER BY u.forum_banned_until DESC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let bans: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.get::<Uuid, _>("id"),
+                "nickname": r.get::<Option<String>, _>("nickname"),
+                "forum_banned_until": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("forum_banned_until"),
+                "total_reports": r.get::<i64, _>("total_reports"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "success": true, "data": bans, "error": null })))
 }
