@@ -13,6 +13,11 @@ pub struct CitiesQuery {
     pub country_code: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct InsightsQuery {
+    pub gender: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct CityResponse {
     pub id: i32,
@@ -84,16 +89,38 @@ async fn get_city_insights(
     State(state): State<AppState>,
     _auth: AuthUser,
     Path(city_id): Path<i32>,
+    Query(params): Query<InsightsQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     use sqlx::Row;
 
-    // Check minimum threshold
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM dates WHERE city_id = $1 AND deleted_at IS NULL"
-    )
-    .bind(city_id)
-    .fetch_one(&state.db)
-    .await?;
+    // Validate gender param if provided
+    let gender_filter = if let Some(ref g) = params.gender {
+        let valid = ["male", "female", "other"];
+        if !valid.contains(&g.as_str()) {
+            return Err(AppError::BadRequest(
+                "gender must be one of: male, female, other".into(),
+            ));
+        }
+        Some(g.as_str())
+    } else {
+        None
+    };
+
+    // Build WHERE clause suffix for gender filtering
+    let gender_clause = match gender_filter {
+        Some(g) => format!(" AND gender = '{}'", g),
+        None => String::new(),
+    };
+
+    // Check minimum threshold (with gender filter applied)
+    let count_query = format!(
+        "SELECT COUNT(*) FROM dates WHERE city_id = $1 AND deleted_at IS NULL{}",
+        gender_clause
+    );
+    let total: i64 = sqlx::query_scalar(&count_query)
+        .bind(city_id)
+        .fetch_one(&state.db)
+        .await?;
 
     if total < 5 {
         return Err(AppError::BadRequest(
@@ -102,7 +129,7 @@ async fn get_city_insights(
     }
 
     // Main aggregate stats - single query with FILTER
-    let stats = sqlx::query(
+    let stats_query = format!(
         r#"
         SELECT
             COUNT(*) as total_dates,
@@ -124,24 +151,28 @@ async fn get_city_insights(
             AVG(face_rating)::float8 as avg_face,
             AVG(body_rating)::float8 as avg_body,
             AVG(chat_rating)::float8 as avg_chat
-        FROM dates WHERE city_id = $1 AND deleted_at IS NULL
+        FROM dates WHERE city_id = $1 AND deleted_at IS NULL{}
         "#,
-    )
-    .bind(city_id)
-    .fetch_one(&state.db)
-    .await?;
+        gender_clause
+    );
+    let stats = sqlx::query(&stats_query)
+        .bind(city_id)
+        .fetch_one(&state.db)
+        .await?;
 
     // Height distribution
-    let heights = sqlx::query(
+    let heights_query = format!(
         r#"
         SELECT height_range, COUNT(*) as count
-        FROM dates WHERE city_id = $1 AND deleted_at IS NULL AND height_range IS NOT NULL
+        FROM dates WHERE city_id = $1 AND deleted_at IS NULL AND height_range IS NOT NULL{}
         GROUP BY height_range ORDER BY count DESC
         "#,
-    )
-    .bind(city_id)
-    .fetch_all(&state.db)
-    .await?;
+        gender_clause
+    );
+    let heights = sqlx::query(&heights_query)
+        .bind(city_id)
+        .fetch_all(&state.db)
+        .await?;
 
     let height_dist: Vec<serde_json::Value> = heights
         .iter()
@@ -154,19 +185,21 @@ async fn get_city_insights(
         .collect();
 
     // Top activity tags (top 5)
-    let activities = sqlx::query(
+    let activities_query = format!(
         r#"
         SELECT t.name, COUNT(*) as count
         FROM date_tags dt
         JOIN tags t ON t.id = dt.tag_id
         JOIN dates d ON d.id = dt.date_id
-        WHERE d.city_id = $1 AND d.deleted_at IS NULL AND t.category = 'activity'
+        WHERE d.city_id = $1 AND d.deleted_at IS NULL AND t.category = 'activity'{}
         GROUP BY t.name ORDER BY count DESC LIMIT 5
         "#,
-    )
-    .bind(city_id)
-    .fetch_all(&state.db)
-    .await?;
+        gender_clause.replace("gender", "d.gender")
+    );
+    let activities = sqlx::query(&activities_query)
+        .bind(city_id)
+        .fetch_all(&state.db)
+        .await?;
 
     let top_activities: Vec<serde_json::Value> = activities
         .iter()
@@ -179,19 +212,21 @@ async fn get_city_insights(
         .collect();
 
     // Top venue tags (top 5)
-    let venues = sqlx::query(
+    let venues_query = format!(
         r#"
         SELECT t.name, COUNT(*) as count
         FROM date_tags dt
         JOIN tags t ON t.id = dt.tag_id
         JOIN dates d ON d.id = dt.date_id
-        WHERE d.city_id = $1 AND d.deleted_at IS NULL AND t.category = 'venue'
+        WHERE d.city_id = $1 AND d.deleted_at IS NULL AND t.category = 'venue'{}
         GROUP BY t.name ORDER BY count DESC LIMIT 5
         "#,
-    )
-    .bind(city_id)
-    .fetch_all(&state.db)
-    .await?;
+        gender_clause.replace("gender", "d.gender")
+    );
+    let venues = sqlx::query(&venues_query)
+        .bind(city_id)
+        .fetch_all(&state.db)
+        .await?;
 
     let top_venues: Vec<serde_json::Value> = venues
         .iter()
@@ -204,19 +239,21 @@ async fn get_city_insights(
         .collect();
 
     // Top meeting tags (top 5)
-    let meetings = sqlx::query(
+    let meetings_query = format!(
         r#"
         SELECT t.name, COUNT(*) as count
         FROM date_tags dt
         JOIN tags t ON t.id = dt.tag_id
         JOIN dates d ON d.id = dt.date_id
-        WHERE d.city_id = $1 AND d.deleted_at IS NULL AND t.category = 'meeting'
+        WHERE d.city_id = $1 AND d.deleted_at IS NULL AND t.category = 'meeting'{}
         GROUP BY t.name ORDER BY count DESC LIMIT 5
         "#,
-    )
-    .bind(city_id)
-    .fetch_all(&state.db)
-    .await?;
+        gender_clause.replace("gender", "d.gender")
+    );
+    let meetings = sqlx::query(&meetings_query)
+        .bind(city_id)
+        .fetch_all(&state.db)
+        .await?;
 
     let top_meetings: Vec<serde_json::Value> = meetings
         .iter()
@@ -229,16 +266,18 @@ async fn get_city_insights(
         .collect();
 
     // Monthly trend (last 6 months)
-    let trends = sqlx::query(
+    let trends_query = format!(
         r#"
         SELECT to_char(date_trunc('month', date_at), 'YYYY-MM') as month, COUNT(*) as count
-        FROM dates WHERE city_id = $1 AND deleted_at IS NULL AND date_at >= NOW() - INTERVAL '6 months'
+        FROM dates WHERE city_id = $1 AND deleted_at IS NULL AND date_at >= NOW() - INTERVAL '6 months'{}
         GROUP BY month ORDER BY month
         "#,
-    )
-    .bind(city_id)
-    .fetch_all(&state.db)
-    .await?;
+        gender_clause
+    );
+    let trends = sqlx::query(&trends_query)
+        .bind(city_id)
+        .fetch_all(&state.db)
+        .await?;
 
     let monthly_trend: Vec<serde_json::Value> = trends
         .iter()

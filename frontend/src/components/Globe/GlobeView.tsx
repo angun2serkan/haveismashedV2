@@ -71,7 +71,7 @@ export function GlobeView({ onDateClick, onCityInsights }: GlobeViewProps) {
         lat: date.latitude,
         lng: date.longitude,
         color: "#ff007f",
-        radius: 0.3,
+        radius: 0.12,
         label: `You — ${date.cityName || "Unknown"}`,
         id: date.id,
         dateData: {
@@ -102,7 +102,7 @@ export function GlobeView({ onDateClick, onCityInsights }: GlobeViewProps) {
         lat: fd.latitude,
         lng: fd.longitude,
         color: fd.color,
-        radius: 0.3,
+        radius: 0.12,
         label: `${fd.friendNickname || "Friend"} — ${fd.cityName || "Unknown"}`,
         id: fd.id,
         dateData: {
@@ -125,17 +125,21 @@ export function GlobeView({ onDateClick, onCityInsights }: GlobeViewProps) {
       });
     }
 
-    // Apply spiral offset for same-city dates
+    // Apply grid offset for same-city dates to prevent overlap
     for (const group of Object.values(cityGroups)) {
       if (group.length === 1) {
         points.push(group[0]!);
       } else {
+        // Place points in a grid pattern with enough spacing
+        const spacing = 0.35; // gap between each point center
+        const cols = Math.ceil(Math.sqrt(group.length));
         for (let i = 0; i < group.length; i++) {
           const pt = group[i]!;
-          const angle = (i * 137.5 * Math.PI) / 180; // golden angle
-          const dist = 0.3 + i * 0.15; // increasing distance
-          const offsetLat = Math.cos(angle) * dist;
-          const offsetLng = Math.sin(angle) * dist;
+          const row = Math.floor(i / cols);
+          const col = i % cols;
+          // Center the grid around the original location
+          const offsetLat = (row - (Math.ceil(group.length / cols) - 1) / 2) * spacing;
+          const offsetLng = (col - (cols - 1) / 2) * spacing;
           points.push({
             ...pt,
             lat: pt.lat + offsetLat,
@@ -252,7 +256,7 @@ export function GlobeView({ onDateClick, onCityInsights }: GlobeViewProps) {
     }
 
     globe.controls().autoRotate = true;
-    globe.controls().autoRotateSpeed = 0.3;
+    globe.controls().autoRotateSpeed = 0.1;
     globe.controls().enableDamping = true;
   }, [dimensions]);
 
@@ -360,7 +364,7 @@ export function GlobeView({ onDateClick, onCityInsights }: GlobeViewProps) {
           pointLat={(d: object) => (d as { lat: number }).lat}
           pointLng={(d: object) => (d as { lng: number }).lng}
           pointColor={(d: object) => (d as { color: string }).color}
-          pointAltitude={0.03}
+          pointAltitude={0.05}
           pointRadius={(d: object) => (d as { radius: number }).radius}
           pointLabel={(d: object) => (d as { label: string }).label}
           onPointClick={(point: object) => {

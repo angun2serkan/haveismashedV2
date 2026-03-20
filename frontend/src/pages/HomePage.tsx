@@ -15,7 +15,8 @@ import { useFriendStore } from "@/stores/friendStore";
 import { useAuthStore } from "@/stores/authStore";
 import { api } from "@/services/api";
 import { useState, useRef, useEffect } from "react";
-import { ChevronUp, Star, Calendar, Smile, Dumbbell, MessageCircle, MapPin, Flag, Globe, Filter } from "lucide-react";
+import { ChevronUp, Star, Calendar, Smile, Dumbbell, MessageCircle, MapPin, Flag, Globe, X, ChevronDown } from "lucide-react";
+import { GlobeFilterBar } from "@/components/Globe/GlobeFilterBar";
 import { getCountryName } from "@/utils/countryName";
 import type { Notification, FriendStats } from "@/types";
 
@@ -44,6 +45,7 @@ export function HomePage() {
   const [selectedFriendStats, setSelectedFriendStats] = useState<FriendStats | null>(null);
   const [selectedFriendName, setSelectedFriendName] = useState("");
   const [selectedFriendColor, setSelectedFriendColor] = useState("");
+  const [friendStatsExpanded, setFriendStatsExpanded] = useState(false);
 
   // Date detail modal
   const [selectedDate, setSelectedDate] = useState<DateDetailData | null>(null);
@@ -102,8 +104,10 @@ export function HomePage() {
         setSelectedFriendName("");
         setSelectedFriendColor("");
       } else {
-        // Specific friend UUID
+        // Specific friend UUID — clear stale stats immediately before fetching new ones
         const friendId = value;
+        setSelectedFriendStats(null);
+        setFriendStatsExpanded(false);
         api.getFriendDates(friendId).then(setFriendDates).catch(() => {});
         api.getFriendStats(friendId).then(setSelectedFriendStats).catch(() => {});
 
@@ -179,92 +183,117 @@ export function HomePage() {
         />
       </Suspense>
 
-      {/* Friend filter dropdown overlay */}
+      {/* Friend filter overlay */}
       <div className="absolute top-4 right-4 z-20">
-        <div className="relative">
-          <Filter
-            size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dark-400 pointer-events-none"
-          />
-          <select
-            value={globeFilter}
-            onChange={(e) => handleFilterChange(e.target.value)}
-            className="bg-dark-900/90 backdrop-blur-md border border-dark-600 rounded-lg pl-8 pr-3 py-2 text-sm text-white appearance-none cursor-pointer focus:outline-none focus:border-neon-500/50 hover:border-dark-500 transition-colors min-w-[140px]"
-          >
-            <option value="mine">Sadece Ben</option>
-            <option value="all">Herkes</option>
-            {acceptedConnections.map((c) => (
-              <option key={c.id} value={getFriendUserId(c)}>
-                {c.friendNickname ?? "Anonim"}
-              </option>
-            ))}
-          </select>
-        </div>
+        <GlobeFilterBar
+          value={globeFilter}
+          onChange={handleFilterChange}
+          friends={acceptedConnections.map((c) => ({
+            value: getFriendUserId(c),
+            label: c.friendNickname ?? "Anonim",
+            color: c.color ?? "#FF5733",
+          }))}
+        />
       </div>
 
-      {/* Friend stats overlay — shown when a specific friend is selected */}
+      {/* Friend stats overlay — collapsible pill + expandable card */}
       {selectedFriendStats && selectedFriendName && (
-        <div className="absolute top-16 right-4 z-20 w-64">
-          <div
-            className="bg-dark-900/90 backdrop-blur-md border rounded-xl p-3 space-y-2"
-            style={{ borderColor: `${selectedFriendColor}40` }}
-          >
-            <p
-              className="text-sm font-bold"
-              style={{ color: selectedFriendColor }}
+        <div className="absolute top-14 right-4 z-20">
+          {/* Collapsed: compact pill */}
+          {!friendStatsExpanded ? (
+            <button
+              onClick={() => setFriendStatsExpanded(true)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full border backdrop-blur-md transition-all duration-200 cursor-pointer hover:scale-[1.03] active:scale-[0.97]"
+              style={{
+                background: "linear-gradient(135deg, rgba(10,10,15,0.85), rgba(10,10,15,0.95))",
+                borderColor: `${selectedFriendColor}50`,
+                boxShadow: `0 0 12px ${selectedFriendColor}25`,
+              }}
             >
-              {selectedFriendName}
-              <span className="text-dark-400 font-normal ml-1 text-xs">istatistikleri</span>
-            </p>
-            <div className="grid grid-cols-2 gap-1.5">
-              <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
-                <MapPin size={12} style={{ color: selectedFriendColor }} />
-                <div>
-                  <p className="text-sm font-bold text-white leading-none">
-                    {selectedFriendStats.totalDates}
-                  </p>
-                  <p className="text-[8px] text-dark-400 uppercase">Dates</p>
+              <span
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: selectedFriendColor, boxShadow: `0 0 6px ${selectedFriendColor}` }}
+              />
+              <span className="text-xs font-semibold text-white/90 max-w-[80px] truncate">
+                {selectedFriendStats.totalDates}
+              </span>
+              <MapPin size={10} style={{ color: selectedFriendColor }} />
+              <span className="text-[10px] text-dark-400">•</span>
+              <span className="text-xs text-white/70">{fmtAvg(selectedFriendStats.averageRating)}</span>
+              <Star size={10} className="text-yellow-400" />
+              <ChevronDown size={12} className="text-dark-400 ml-0.5" />
+            </button>
+          ) : (
+            /* Expanded: full stats card */
+            <div
+              className="w-64 bg-dark-900/90 backdrop-blur-md border rounded-xl p-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-200"
+              style={{ borderColor: `${selectedFriendColor}40` }}
+            >
+              <div className="flex items-center justify-between">
+                <p
+                  className="text-sm font-bold"
+                  style={{ color: selectedFriendColor }}
+                >
+                  {selectedFriendName}
+                  <span className="text-dark-400 font-normal ml-1 text-xs">istatistikleri</span>
+                </p>
+                <button
+                  onClick={() => setFriendStatsExpanded(false)}
+                  className="p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X size={14} className="text-dark-400" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
+                  <MapPin size={12} style={{ color: selectedFriendColor }} />
+                  <div>
+                    <p className="text-sm font-bold text-white leading-none">
+                      {selectedFriendStats.totalDates}
+                    </p>
+                    <p className="text-[8px] text-dark-400 uppercase">Dates</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
+                  <Flag size={12} className="text-cyan-400" />
+                  <div>
+                    <p className="text-sm font-bold text-white leading-none">
+                      {selectedFriendStats.uniqueCountries}
+                    </p>
+                    <p className="text-[8px] text-dark-400 uppercase">Countries</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
+                  <Globe size={12} className="text-purple-400" />
+                  <div>
+                    <p className="text-sm font-bold text-white leading-none">
+                      {selectedFriendStats.uniqueCities}
+                    </p>
+                    <p className="text-[8px] text-dark-400 uppercase">Cities</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
+                  <Star size={12} className="text-yellow-400" />
+                  <div>
+                    <p className="text-sm font-bold text-white leading-none">
+                      {fmtAvg(selectedFriendStats.averageRating)}
+                    </p>
+                    <p className="text-[8px] text-dark-400 uppercase">Avg Rating</p>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
-                <Flag size={12} className="text-cyan-400" />
-                <div>
-                  <p className="text-sm font-bold text-white leading-none">
-                    {selectedFriendStats.uniqueCountries}
-                  </p>
-                  <p className="text-[8px] text-dark-400 uppercase">Countries</p>
+              {selectedFriendStats.badges.length > 0 && (
+                <div className="pt-2 border-t border-dark-700">
+                  <p className="text-[8px] text-dark-500 uppercase mb-1">Rozetler</p>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedFriendStats.badges.map((b) => (
+                      <span key={b.id} className="text-lg" title={b.name}>{b.icon}</span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
-                <Globe size={12} className="text-purple-400" />
-                <div>
-                  <p className="text-sm font-bold text-white leading-none">
-                    {selectedFriendStats.uniqueCities}
-                  </p>
-                  <p className="text-[8px] text-dark-400 uppercase">Cities</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 bg-dark-800/80 rounded-lg px-2 py-1.5">
-                <Star size={12} className="text-yellow-400" />
-                <div>
-                  <p className="text-sm font-bold text-white leading-none">
-                    {fmtAvg(selectedFriendStats.averageRating)}
-                  </p>
-                  <p className="text-[8px] text-dark-400 uppercase">Avg Rating</p>
-                </div>
-              </div>
+              )}
             </div>
-            {selectedFriendStats.badges.length > 0 && (
-              <div className="pt-2 border-t border-dark-700">
-                <p className="text-[8px] text-dark-500 uppercase mb-1">Rozetler</p>
-                <div className="flex flex-wrap gap-1">
-                  {selectedFriendStats.badges.map((b) => (
-                    <span key={b.id} className="text-lg" title={b.name}>{b.icon}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 

@@ -214,9 +214,10 @@ export const api = {
       `/cities${countryCode ? `?country_code=${countryCode}` : ""}`,
     ),
 
-  getCityInsights: async (cityId: number): Promise<CityInsights> => {
+  getCityInsights: async (cityId: number, gender?: string): Promise<CityInsights> => {
+    const qs = gender ? `?gender=${gender}` : "";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await request<any>(`/cities/${cityId}/insights`);
+    const raw = await request<any>(`/cities/${cityId}/insights${qs}`);
     return {
       totalDates: raw.total_dates,
       avgRating: raw.avg_rating,

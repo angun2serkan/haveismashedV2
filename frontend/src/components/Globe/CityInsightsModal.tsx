@@ -164,6 +164,7 @@ export function CityInsightsModal({
   const [data, setData] = useState<CityInsights | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [genderFilter, setGenderFilter] = useState<"all" | "female" | "male">("all");
 
   useEffect(() => {
     if (!isOpen || !cityId) return;
@@ -172,8 +173,9 @@ export function CityInsightsModal({
     setError(null);
     setData(null);
 
+    const gender = genderFilter === "all" ? undefined : genderFilter;
     api
-      .getCityInsights(cityId)
+      .getCityInsights(cityId, gender)
       .then((result) => {
         if (!cancelled) setData(result);
       })
@@ -187,7 +189,12 @@ export function CityInsightsModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, cityId]);
+  }, [isOpen, cityId, genderFilter]);
+
+  // Reset filter when modal closes
+  useEffect(() => {
+    if (!isOpen) setGenderFilter("all");
+  }, [isOpen]);
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`${cityName} — City Stats`}>
@@ -209,6 +216,33 @@ export function CityInsightsModal({
           <p className="text-dark-400 text-sm">
             Bu sehir icin henuz yeterli veri yok (minimum 5 date gerekli)
           </p>
+        </div>
+      )}
+
+      {/* Gender filter toggle - always visible when modal is open */}
+      {!loading && !error && (
+        <div className="flex gap-1 p-1 bg-dark-800 rounded-lg mb-4">
+          {([
+            { key: "all", label: "Tümü" },
+            { key: "female", label: "Kadınlar" },
+            { key: "male", label: "Erkekler" },
+          ] as const).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setGenderFilter(key)}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${
+                genderFilter === key
+                  ? key === "female"
+                    ? "bg-pink-500/20 text-pink-400 border border-pink-500/30"
+                    : key === "male"
+                      ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                      : "bg-neon-500/20 text-neon-400 border border-neon-500/30"
+                  : "text-dark-400 hover:text-dark-200 border border-transparent"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       )}
 
@@ -263,36 +297,38 @@ export function CityInsightsModal({
             </div>
           </div>
 
-          {/* Section 2: Gender Breakdown */}
-          <div>
-            <h3 className="text-xs text-dark-400 uppercase tracking-wider mb-2">
-              Gender Breakdown
-            </h3>
-            <div className="flex gap-2">
-              <GenderColumn
-                label="Kadinlar"
-                count={data.genderBreakdown.femaleCount}
-                avgRating={data.genderBreakdown.avgRatingFemale}
-                avgFace={data.genderBreakdown.avgFaceFemale}
-                avgBody={data.genderBreakdown.avgBodyFemale}
-                avgChat={data.genderBreakdown.avgChatFemale}
-                color="text-pink-400"
-                bgClass="bg-pink-500/5"
-                borderClass="border-pink-500/20"
-              />
-              <GenderColumn
-                label="Erkekler"
-                count={data.genderBreakdown.maleCount}
-                avgRating={data.genderBreakdown.avgRatingMale}
-                avgFace={data.genderBreakdown.avgFaceMale}
-                avgBody={data.genderBreakdown.avgBodyMale}
-                avgChat={data.genderBreakdown.avgChatMale}
-                color="text-blue-400"
-                bgClass="bg-blue-500/5"
-                borderClass="border-blue-500/20"
-              />
+          {/* Section 2: Gender Breakdown - only shown when no gender filter */}
+          {genderFilter === "all" && (
+            <div>
+              <h3 className="text-xs text-dark-400 uppercase tracking-wider mb-2">
+                Gender Breakdown
+              </h3>
+              <div className="flex gap-2">
+                <GenderColumn
+                  label="Kadinlar"
+                  count={data.genderBreakdown.femaleCount}
+                  avgRating={data.genderBreakdown.avgRatingFemale}
+                  avgFace={data.genderBreakdown.avgFaceFemale}
+                  avgBody={data.genderBreakdown.avgBodyFemale}
+                  avgChat={data.genderBreakdown.avgChatFemale}
+                  color="text-pink-400"
+                  bgClass="bg-pink-500/5"
+                  borderClass="border-pink-500/20"
+                />
+                <GenderColumn
+                  label="Erkekler"
+                  count={data.genderBreakdown.maleCount}
+                  avgRating={data.genderBreakdown.avgRatingMale}
+                  avgFace={data.genderBreakdown.avgFaceMale}
+                  avgBody={data.genderBreakdown.avgBodyMale}
+                  avgChat={data.genderBreakdown.avgChatMale}
+                  color="text-blue-400"
+                  bgClass="bg-blue-500/5"
+                  borderClass="border-blue-500/20"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Section 3: Top Lists */}
           <div className="grid grid-cols-1 gap-4">
