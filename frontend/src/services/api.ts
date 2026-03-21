@@ -287,11 +287,18 @@ export const api = {
       body: JSON.stringify({ color }),
     }),
 
-  getFriendDates: async (friendId?: string): Promise<FriendDate[]> => {
-    const qs = friendId ? `?friend_id=${friendId}` : "";
+  getFriendDates: async (friendId?: string, cursor?: string, limit?: number): Promise<{ dates: FriendDate[]; nextCursor: string | null }> => {
+    const params = new URLSearchParams();
+    if (friendId) params.set("friend_id", friendId);
+    if (cursor) params.set("cursor", cursor);
+    if (limit) params.set("limit", String(limit));
+    const qs = params.toString() ? `?${params.toString()}` : "";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw = await request<any[]>(`/friends/dates${qs}`);
-    return raw.map((d) => ({
+    const raw = await request<any>(`/friends/dates${qs}`);
+    // Handle both old array response and new paginated response
+    const items = Array.isArray(raw) ? raw : (raw.dates || raw);
+    const nextCursor = Array.isArray(raw) ? null : (raw.next_cursor || null);
+    const dates = (Array.isArray(items) ? items : []).map((d: any) => ({
       id: d.id,
       countryCode: d.country_code,
       cityName: d.city_name ?? null,
@@ -313,6 +320,7 @@ export const api = {
       chatRating: d.chat_rating ?? null,
       tagIds: d.tag_ids ?? [],
     }));
+    return { dates, nextCursor };
   },
 
   getFriendStats: async (friendId: string): Promise<FriendStats> => {

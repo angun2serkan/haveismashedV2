@@ -1,7 +1,7 @@
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::Row;
 use uuid::Uuid;
@@ -15,6 +15,16 @@ use crate::AppState;
 #[derive(Deserialize)]
 struct FriendDatesQuery {
     friend_id: Option<Uuid>,
+    cursor: Option<Uuid>,
+    limit: Option<i64>,
+}
+
+// ── Response types ──────────────────────────────────────────
+
+#[derive(Serialize)]
+struct FriendDateListResponse {
+    dates: Vec<serde_json::Value>,
+    next_cursor: Option<Uuid>,
 }
 
 // ── Router ──────────────────────────────────────────────────────
@@ -27,116 +37,254 @@ pub fn router() -> Router<AppState> {
 
 // ── Handlers ────────────────────────────────────────────────────
 
-/// GET /api/friends/dates?friend_id=xxx
+/// GET /api/friends/dates?friend_id=xxx&cursor=yyy&limit=10
 /// Returns dates from all accepted friends (or a specific friend), with full date details.
+/// Supports cursor-based pagination ordered by date_at DESC, id DESC.
 async fn get_friend_dates(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(params): Query<FriendDatesQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let db = &state.db;
+    let limit = params.limit.unwrap_or(10).min(100);
 
-    let rows = if let Some(friend_id) = params.friend_id {
-        sqlx::query(
-            r#"
-            SELECT
-                d.id,
-                d.country_code,
-                c.name   AS city_name,
-                d.city_id,
-                c.longitude,
-                c.latitude,
-                d.date_at,
-                d.gender,
-                d.age_range,
-                d.height_range,
-                d.person_nickname,
-                d.description,
-                d.rating,
-                d.face_rating,
-                d.body_rating,
-                d.chat_rating,
-                conn.color,
-                u.nickname AS friend_nickname,
-                d.user_id  AS friend_id,
-                (SELECT b.icon FROM user_badges ub JOIN badges b ON b.id = ub.badge_id WHERE ub.user_id = d.user_id ORDER BY b.id DESC LIMIT 1) AS top_badge_icon
-            FROM dates d
-            JOIN users u ON u.id = d.user_id
-            JOIN cities c ON c.id = d.city_id
-            JOIN connections conn ON (
-                (conn.requester_id = $1 AND conn.responder_id = d.user_id)
-                OR (conn.responder_id = $1 AND conn.requester_id = d.user_id)
-            )
-            WHERE conn.status = 'accepted'
-              AND d.deleted_at IS NULL
-              AND d.user_id  = $2
-              AND NOT EXISTS (
-                  SELECT 1 FROM privacy_settings ps
-                  WHERE ps.user_id = d.user_id
-                  AND ps.connection_id IS NULL
-                  AND ps.share_dates = FALSE
-              )
-            ORDER BY d.date_at DESC
-            "#,
+    // If a cursor is provided, look up its (date_at, id) for composite comparison
+    let cursor_row = if let Some(cursor_id) = params.cursor {
+        let row = sqlx::query(
+            "SELECT date_at, id FROM dates WHERE id = $1 AND deleted_at IS NULL",
         )
-        .bind(auth.user_id)
-        .bind(friend_id)
-        .fetch_all(db)
-        .await?
+        .bind(cursor_id)
+        .fetch_optional(db)
+        .await?;
+        row.map(|r| {
+            let date_at: chrono::NaiveDate = r.get("date_at");
+            let id: Uuid = r.get("id");
+            (date_at, id)
+        })
     } else {
-        sqlx::query(
-            r#"
-            SELECT
-                d.id,
-                d.country_code,
-                c.name   AS city_name,
-                d.city_id,
-                c.longitude,
-                c.latitude,
-                d.date_at,
-                d.gender,
-                d.age_range,
-                d.height_range,
-                d.person_nickname,
-                d.description,
-                d.rating,
-                d.face_rating,
-                d.body_rating,
-                d.chat_rating,
-                conn.color,
-                u.nickname AS friend_nickname,
-                d.user_id  AS friend_id,
-                (SELECT b.icon FROM user_badges ub JOIN badges b ON b.id = ub.badge_id WHERE ub.user_id = d.user_id ORDER BY b.id DESC LIMIT 1) AS top_badge_icon
-            FROM dates d
-            JOIN users u ON u.id = d.user_id
-            JOIN cities c ON c.id = d.city_id
-            JOIN connections conn ON (
-                (conn.requester_id = $1 AND conn.responder_id = d.user_id)
-                OR (conn.responder_id = $1 AND conn.requester_id = d.user_id)
-            )
-            WHERE conn.status = 'accepted'
-              AND d.deleted_at IS NULL
-              AND d.user_id != $1
-              AND NOT EXISTS (
-                  SELECT 1 FROM privacy_settings ps
-                  WHERE ps.user_id = d.user_id
-                  AND ps.connection_id IS NULL
-                  AND ps.share_dates = FALSE
-              )
-            ORDER BY d.date_at DESC
-            "#,
-        )
-        .bind(auth.user_id)
-        .fetch_all(db)
-        .await?
+        None
     };
 
+    let rows = match (params.friend_id, &cursor_row) {
+        // Specific friend WITH cursor
+        (Some(friend_id), Some((cursor_date_at, cursor_id))) => {
+            sqlx::query(
+                r#"
+                SELECT
+                    d.id,
+                    d.country_code,
+                    c.name   AS city_name,
+                    d.city_id,
+                    c.longitude,
+                    c.latitude,
+                    d.date_at,
+                    d.gender,
+                    d.age_range,
+                    d.height_range,
+                    d.person_nickname,
+                    d.description,
+                    d.rating,
+                    d.face_rating,
+                    d.body_rating,
+                    d.chat_rating,
+                    conn.color,
+                    u.nickname AS friend_nickname,
+                    d.user_id  AS friend_id,
+                    (SELECT b.icon FROM user_badges ub JOIN badges b ON b.id = ub.badge_id WHERE ub.user_id = d.user_id ORDER BY b.id DESC LIMIT 1) AS top_badge_icon
+                FROM dates d
+                JOIN users u ON u.id = d.user_id
+                JOIN cities c ON c.id = d.city_id
+                JOIN connections conn ON (
+                    (conn.requester_id = $1 AND conn.responder_id = d.user_id)
+                    OR (conn.responder_id = $1 AND conn.requester_id = d.user_id)
+                )
+                WHERE conn.status = 'accepted'
+                  AND d.deleted_at IS NULL
+                  AND d.user_id  = $2
+                  AND (d.date_at, d.id) < ($3, $4)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM privacy_settings ps
+                      WHERE ps.user_id = d.user_id
+                      AND ps.connection_id IS NULL
+                      AND ps.share_dates = FALSE
+                  )
+                ORDER BY d.date_at DESC, d.id DESC
+                LIMIT $5
+                "#,
+            )
+            .bind(auth.user_id)
+            .bind(friend_id)
+            .bind(cursor_date_at)
+            .bind(cursor_id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        // Specific friend WITHOUT cursor
+        (Some(friend_id), None) => {
+            sqlx::query(
+                r#"
+                SELECT
+                    d.id,
+                    d.country_code,
+                    c.name   AS city_name,
+                    d.city_id,
+                    c.longitude,
+                    c.latitude,
+                    d.date_at,
+                    d.gender,
+                    d.age_range,
+                    d.height_range,
+                    d.person_nickname,
+                    d.description,
+                    d.rating,
+                    d.face_rating,
+                    d.body_rating,
+                    d.chat_rating,
+                    conn.color,
+                    u.nickname AS friend_nickname,
+                    d.user_id  AS friend_id,
+                    (SELECT b.icon FROM user_badges ub JOIN badges b ON b.id = ub.badge_id WHERE ub.user_id = d.user_id ORDER BY b.id DESC LIMIT 1) AS top_badge_icon
+                FROM dates d
+                JOIN users u ON u.id = d.user_id
+                JOIN cities c ON c.id = d.city_id
+                JOIN connections conn ON (
+                    (conn.requester_id = $1 AND conn.responder_id = d.user_id)
+                    OR (conn.responder_id = $1 AND conn.requester_id = d.user_id)
+                )
+                WHERE conn.status = 'accepted'
+                  AND d.deleted_at IS NULL
+                  AND d.user_id  = $2
+                  AND NOT EXISTS (
+                      SELECT 1 FROM privacy_settings ps
+                      WHERE ps.user_id = d.user_id
+                      AND ps.connection_id IS NULL
+                      AND ps.share_dates = FALSE
+                  )
+                ORDER BY d.date_at DESC, d.id DESC
+                LIMIT $3
+                "#,
+            )
+            .bind(auth.user_id)
+            .bind(friend_id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        // All friends WITH cursor
+        (None, Some((cursor_date_at, cursor_id))) => {
+            sqlx::query(
+                r#"
+                SELECT
+                    d.id,
+                    d.country_code,
+                    c.name   AS city_name,
+                    d.city_id,
+                    c.longitude,
+                    c.latitude,
+                    d.date_at,
+                    d.gender,
+                    d.age_range,
+                    d.height_range,
+                    d.person_nickname,
+                    d.description,
+                    d.rating,
+                    d.face_rating,
+                    d.body_rating,
+                    d.chat_rating,
+                    conn.color,
+                    u.nickname AS friend_nickname,
+                    d.user_id  AS friend_id,
+                    (SELECT b.icon FROM user_badges ub JOIN badges b ON b.id = ub.badge_id WHERE ub.user_id = d.user_id ORDER BY b.id DESC LIMIT 1) AS top_badge_icon
+                FROM dates d
+                JOIN users u ON u.id = d.user_id
+                JOIN cities c ON c.id = d.city_id
+                JOIN connections conn ON (
+                    (conn.requester_id = $1 AND conn.responder_id = d.user_id)
+                    OR (conn.responder_id = $1 AND conn.requester_id = d.user_id)
+                )
+                WHERE conn.status = 'accepted'
+                  AND d.deleted_at IS NULL
+                  AND d.user_id != $1
+                  AND (d.date_at, d.id) < ($2, $3)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM privacy_settings ps
+                      WHERE ps.user_id = d.user_id
+                      AND ps.connection_id IS NULL
+                      AND ps.share_dates = FALSE
+                  )
+                ORDER BY d.date_at DESC, d.id DESC
+                LIMIT $4
+                "#,
+            )
+            .bind(auth.user_id)
+            .bind(cursor_date_at)
+            .bind(cursor_id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+        // All friends WITHOUT cursor
+        (None, None) => {
+            sqlx::query(
+                r#"
+                SELECT
+                    d.id,
+                    d.country_code,
+                    c.name   AS city_name,
+                    d.city_id,
+                    c.longitude,
+                    c.latitude,
+                    d.date_at,
+                    d.gender,
+                    d.age_range,
+                    d.height_range,
+                    d.person_nickname,
+                    d.description,
+                    d.rating,
+                    d.face_rating,
+                    d.body_rating,
+                    d.chat_rating,
+                    conn.color,
+                    u.nickname AS friend_nickname,
+                    d.user_id  AS friend_id,
+                    (SELECT b.icon FROM user_badges ub JOIN badges b ON b.id = ub.badge_id WHERE ub.user_id = d.user_id ORDER BY b.id DESC LIMIT 1) AS top_badge_icon
+                FROM dates d
+                JOIN users u ON u.id = d.user_id
+                JOIN cities c ON c.id = d.city_id
+                JOIN connections conn ON (
+                    (conn.requester_id = $1 AND conn.responder_id = d.user_id)
+                    OR (conn.responder_id = $1 AND conn.requester_id = d.user_id)
+                )
+                WHERE conn.status = 'accepted'
+                  AND d.deleted_at IS NULL
+                  AND d.user_id != $1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM privacy_settings ps
+                      WHERE ps.user_id = d.user_id
+                      AND ps.connection_id IS NULL
+                      AND ps.share_dates = FALSE
+                  )
+                ORDER BY d.date_at DESC, d.id DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(auth.user_id)
+            .bind(limit + 1)
+            .fetch_all(db)
+            .await?
+        }
+    };
+
+    let has_more = rows.len() as i64 > limit;
+    let taken_rows: Vec<_> = rows.into_iter().take(limit as usize).collect();
+
     // Batch-fetch tag_ids for all dates (avoid N+1)
-    let date_ids: Vec<Uuid> = rows.iter().map(|r| r.get::<Uuid, _>("id")).collect();
+    let date_ids: Vec<Uuid> = taken_rows.iter().map(|r| r.get::<Uuid, _>("id")).collect();
     let tags_map = fetch_tags_batch(db, &date_ids).await?;
 
     // Build response
-    let dates: Vec<serde_json::Value> = rows
+    let dates: Vec<serde_json::Value> = taken_rows
         .iter()
         .map(|r| {
             let did: Uuid = r.get("id");
@@ -166,9 +314,17 @@ async fn get_friend_dates(
         })
         .collect();
 
+    let next_cursor = if has_more {
+        dates.last().and_then(|d| d["id"].as_str()).and_then(|s| Uuid::parse_str(s).ok())
+    } else {
+        None
+    };
+
+    let resp = FriendDateListResponse { dates, next_cursor };
+
     Ok(Json(json!({
         "success": true,
-        "data": dates,
+        "data": resp,
         "error": null
     })))
 }

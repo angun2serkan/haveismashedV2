@@ -58,7 +58,7 @@ export function HomePage() {
   useEffect(() => {
     api.getDates().then((res) => setDates(res.dates)).catch(() => {});
     api.getStats().then(setStats).catch(() => {});
-    api.getFriendDates().then(setFriendDates).catch(() => {});
+    api.getFriendDates().then((res) => setFriendDates(res.dates)).catch(() => {});
     // Load connections for the filter dropdown
     api.getConnections("accepted").then(setConnections).catch(() => {});
   }, [setDates, setStats, setFriendDates, setConnections]);
@@ -99,7 +99,7 @@ export function HomePage() {
         setSelectedFriendColor("");
       } else if (value === "all") {
         // Refetch all friend dates
-        api.getFriendDates().then(setFriendDates).catch(() => {});
+        api.getFriendDates().then((res) => setFriendDates(res.dates)).catch(() => {});
         setSelectedFriendStats(null);
         setSelectedFriendName("");
         setSelectedFriendColor("");
@@ -108,7 +108,7 @@ export function HomePage() {
         const friendId = value;
         setSelectedFriendStats(null);
         setFriendStatsExpanded(false);
-        api.getFriendDates(friendId).then(setFriendDates).catch(() => {});
+        api.getFriendDates(friendId).then((res) => setFriendDates(res.dates)).catch(() => {});
         api.getFriendStats(friendId).then(setSelectedFriendStats).catch(() => {});
 
         // Find friend info from connections
